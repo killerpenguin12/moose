@@ -48,7 +48,7 @@ GBEBLocation::GBEBLocation(const InputParameters & parameters)
   random2.push_back(random);
   random2.push_back(new1);
   random2.push_back(new2);
-  EBVectorFunction random3(random2);
+  EBVector random3(random2);
 
   EBTerm one("v0x");
   EBTerm two("v1");

@@ -8,7 +8,7 @@
 #include "AnisoTwoGrainEulerAngleProvider.h"
 #include "FEProblemBase.h"
 
-registerMooseObject("MarmotApp", AnisoTwoGrainEulerAngleProvider);
+registerMooseObject("PhaseFieldApp", AnisoTwoGrainEulerAngleProvider);
 
 template <>
 InputParameters

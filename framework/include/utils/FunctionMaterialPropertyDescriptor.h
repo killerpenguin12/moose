@@ -105,3 +105,7 @@ private:
   /// cache the final property name of the derivative
   std::string _property_name;
 };
+
+template class FunctionMaterialPropertyDescriptor<Real>;
+template class FunctionMaterialPropertyDescriptor<RealVectorValue>;
+template class FunctionMaterialPropertyDescriptor<RankTwoTensor>;

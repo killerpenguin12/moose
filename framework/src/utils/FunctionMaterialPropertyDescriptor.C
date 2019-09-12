@@ -218,9 +218,9 @@ FunctionMaterialPropertyDescriptor<T>::value() const
     // get the material property reference
     if (_material_parent)
       _value =
-          &(_material_parent->getMaterialPropertyDerivative<Real>(_base_name, _derivative_vars));
+          &(_material_parent->getMaterialPropertyDerivative<T>(_base_name, _derivative_vars));
     else if (_kernel_parent)
-      _value = &(_kernel_parent->getMaterialPropertyDerivative<Real>(_base_name, _derivative_vars));
+      _value = &(_kernel_parent->getMaterialPropertyDerivative<T>(_base_name, _derivative_vars));
     else
       mooseError("A FunctionMaterialPropertyDescriptor must be owned by either a Material or a "
                  "Kernel object.");

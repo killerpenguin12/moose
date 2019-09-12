@@ -13,10 +13,12 @@
 #include <ostream>
 #include <sstream>
 #include <iomanip>
+#include <math.h>
 
 #include "MooseError.h"
 #include "libmesh/libmesh_common.h"
 #include "RotationTensor.h"
+#include "FunctionMaterialPropertyDescriptor.h"
 
 using namespace libMesh;
 
@@ -54,28 +56,23 @@ public:
   class EBTerm;
   class EBTermNode;
   class EBFunction;
-  class EBMatrixFunction;
-  class EBVectorFunction;
-  class EBQuaternionFunction;
+  class EBMatrix;
+  class EBVector;
+  class EBQuaternion;
   class EBSubstitutionRule;
   typedef std::vector<EBTerm> EBTermList;
-  typedef std::vector<EBTermNode *> EBTermNodeList;
+  typedef std::vector<std::shared_ptr<EBTermNode> > EBTermNodeList;
   typedef std::vector<const EBSubstitutionRule *> EBSubstitutionRuleList;
 
-  enum MatType {Re, ReVecVal, RTwoTens};
-
-  std::vector<std::pair<std::string, MatType> > _mat_prop_info;
-
-  EBTerm setEBMaterialPropertyReal(const std::string & name);
-  EBVectorFunction setEBMaterialPropertyRealVectorValue(const std::string & name);
-  EBMatrixFunction setEBMaterialPropertyRankTwoTensor(const std::string & name);
+  static std::shared_ptr<EBTermNode> derivative_of;
+  static unsigned int current_quad_point;
 
   /// Base class for nodes in the expression tree
-  class EBTermNode
+  class EBTermNode : public std::enable_shared_from_this<EBTermNode>
   {
   public:
+    EBTermNode() : isSimplified(false), derivative(NULL), isEvaluated(false), isBoolEvaluated(false) {};
     virtual ~EBTermNode(){};
-    virtual EBTermNode * clone() const = 0;
 
     virtual std::string stringify() const = 0;
     virtual unsigned int substitute(const EBSubstitutionRuleList & /*rule*/) { return 0; }
@@ -84,6 +81,27 @@ public:
     {
       return os << node.stringify();
     }
+
+    virtual std::shared_ptr<EBTermNode> simplify() = 0;
+    virtual std::shared_ptr<EBTermNode> takeDerivative() = 0;
+    virtual Real evaluate() = 0;
+    virtual bool boolEvaluate() = 0;
+    virtual void cleanUp()
+    {
+      simplified = NULL;
+      isSimplified = false;
+      derivative = NULL;
+      isEvaluated = false;
+      isBoolEvaluated = false;
+    }
+
+    std::shared_ptr<EBTermNode> simplified;
+    bool isSimplified;
+    std::shared_ptr<EBTermNode> derivative;
+    bool isEvaluated;
+    Real evaluated;
+    bool isBoolEvaluated;
+    bool boolEvaluated;
   };
 
   /// Template class for leaf nodes holding numbers in the expression tree
@@ -94,10 +112,30 @@ public:
 
   public:
     EBNumberNode(T value) : _value(value){};
-    virtual EBNumberNode<T> * clone() const { return new EBNumberNode(_value); }
 
     virtual std::string stringify() const;
     virtual int precedence() const { return 0; }
+
+    virtual std::shared_ptr<EBTermNode> simplify()
+    {
+      if(_value == 0)
+        return NULL;
+      return this->shared_from_this();
+    }
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      return std::make_shared<EBNumberNode<int> >(0);
+    }
+
+    virtual Real evaluate()
+    {
+      return double(_value);
+    }
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
   };
 
   /// Template class for leaf nodes holding symbols (i.e. variables) in the expression tree
@@ -107,10 +145,79 @@ public:
 
   public:
     EBSymbolNode(std::string symbol) : _symbol(symbol){};
-    virtual EBSymbolNode * clone() const { return new EBSymbolNode(_symbol); }
 
     virtual std::string stringify() const;
     virtual int precedence() const { return 0; }
+    virtual std::shared_ptr<EBTermNode> simplify()
+    {
+      return this->shared_from_this();
+    }
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      mooseError("This is not defined for EBMaterials");
+      return NULL;
+    }
+    virtual Real evaluate()
+    {
+      mooseError("Not a defined type");
+      return 0;
+    }
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
+
+  };
+
+  template <typename T2>
+  class EBMatPropNode : public EBSymbolNode
+  {
+    FunctionMaterialPropertyDescriptor<T2> * _mpd;
+    int _comp1;
+    int _comp2;
+
+  public:
+    EBMatPropNode(const std::string & name, FunctionMaterialPropertyDescriptor<T2> * mpd, int comp1 = -1, int comp2 = -1)
+      : EBSymbolNode(name), _mpd(mpd), _comp1(comp1), _comp2(comp2) {};
+
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      return std::make_shared<EBNumberNode<int> >(0);
+    }
+    virtual Real evaluate();
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
+  };
+
+  template <typename T2, bool = true>
+  class EBCoupledVarNode : public EBSymbolNode
+  {
+    int _comp1;
+    int _comp2;
+    const T2 * _value;
+
+  public:
+    EBCoupledVarNode(const std::string & name, const T2 * value,
+                     int comp1 = -1, int comp2 = -1)
+      :  EBSymbolNode(name), _comp1(comp1), _comp2(comp2),
+         _value(value){};
+
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      if(derivative_of == this->shared_from_this())
+        return std::make_shared<EBNumberNode<Real> >(1.0);
+      return std::make_shared<EBNumberNode<int> >(0);
+    }
+    virtual Real evaluate();
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
   };
 
   /**
@@ -123,24 +230,54 @@ public:
 
   public:
     EBTempIDNode(unsigned int id) : _id(id){};
-    virtual EBTempIDNode * clone() const { return new EBTempIDNode(_id); }
 
     virtual std::string stringify() const; // returns "[idnumber]"
     virtual int precedence() const { return 0; }
+
+    virtual std::shared_ptr<EBTermNode> simplify()
+    {
+      return this->shared_from_this();
+    }
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      mooseError("Anonymous nodes still present when ready to evaluate");
+      return NULL;
+    }
+    virtual Real evaluate()
+    {
+      mooseError("Anonymous nodes still present when ready to evaluate");
+      return 0;
+    }
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
   };
 
   /// Base class for nodes with a single sub node (i.e. functions or operators taking one argument)
   class EBUnaryTermNode : public EBTermNode
   {
   public:
-    EBUnaryTermNode(EBTermNode * subnode) : _subnode(subnode){};
-    virtual ~EBUnaryTermNode() { delete _subnode; };
+    EBUnaryTermNode(std::shared_ptr<EBTermNode> subnode) : _subnode(subnode){};
+    virtual ~EBUnaryTermNode() {};
 
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
-    const EBTermNode * getSubnode() const { return _subnode; }
+    const std::shared_ptr<EBTermNode> getSubnode() const { return _subnode; }
+
+    virtual void cleanUp()
+    {
+      simplified = NULL;
+      isSimplified = false;
+      derivative = NULL;
+      isEvaluated = false;
+      isBoolEvaluated = false;
+      if(_subnode->isEvaluated || _subnode->isBoolEvaluated)
+        _subnode->cleanUp();
+    }
 
   protected:
-    EBTermNode * _subnode;
+    std::shared_ptr<EBTermNode> _subnode;
   };
 
   /// Node representing a function with two arguments
@@ -164,15 +301,20 @@ public:
       ATAN
     } _type;
 
-    EBUnaryFuncTermNode(EBTermNode * subnode, NodeType type)
+    EBUnaryFuncTermNode(std::shared_ptr<EBTermNode> subnode, NodeType type)
       : EBUnaryTermNode(subnode), _type(type){};
-    virtual EBUnaryFuncTermNode * clone() const
-    {
-      return new EBUnaryFuncTermNode(_subnode->clone(), _type);
-    };
 
     virtual std::string stringify() const;
     virtual int precedence() const { return 2; }
+
+    virtual std::shared_ptr<EBTermNode> simplify();
+    virtual std::shared_ptr<EBTermNode> takeDerivative();
+    virtual Real evaluate();
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
   };
 
   /// Node representing a unary operator
@@ -185,33 +327,116 @@ public:
       LOGICNOT
     } _type;
 
-    EBUnaryOpTermNode(EBTermNode * subnode, NodeType type)
+    EBUnaryOpTermNode(std::shared_ptr<EBTermNode> subnode, NodeType type)
       : EBUnaryTermNode(subnode), _type(type){};
-    virtual EBUnaryOpTermNode * clone() const
-    {
-      return new EBUnaryOpTermNode(_subnode->clone(), _type);
-    };
 
     virtual std::string stringify() const;
     virtual int precedence() const { return 3; }
+
+    virtual std::shared_ptr<EBTermNode> simplify()
+    {
+      if(!isSimplified)
+      {
+        std::shared_ptr<EBTermNode> new_sub = _subnode->simplify();
+        if(new_sub == NULL)
+        {
+          _subnode = std::make_shared<EBNumberNode<int> >(0);
+          if(_type == NEG)
+          {
+            simplified = NULL;
+            isSimplified = true;
+            return simplified;
+          }
+        }
+        else if(_subnode != new_sub)
+          _subnode = new_sub;
+        simplified = this->shared_from_this();
+        isSimplified = true;
+      }
+      return simplified;
+    }
+
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      if(derivative == NULL)
+      {
+        switch (_type)
+        {
+          case NEG:
+          {
+            derivative = std::make_shared<EBUnaryOpTermNode>(_subnode->takeDerivative(), NodeType::NEG);
+            break;
+          }
+          case LOGICNOT:
+            mooseError("Logical Operator not in logical statement");
+        }
+      }
+      return derivative;
+    }
+
+    virtual Real evaluate()
+    {
+      if(!isEvaluated)
+      {
+        switch (_type)
+        {
+          case NEG:
+          {
+            evaluated = -_subnode->evaluate();
+            break;
+          }
+          case LOGICNOT:
+            mooseError("not a Real value");
+        }
+      }
+      isEvaluated = true;
+      return evaluated;
+    }
+    virtual bool boolEvaluate()
+    {
+      if(!isBoolEvaluated)
+      {
+        switch (_type)
+        {
+          case LOGICNOT:
+          {
+            boolEvaluated = !_subnode->boolEvaluate();
+            break;
+          }
+          case NEG:
+            mooseError("not a boolean value");
+        }
+      }
+      isBoolEvaluated = true;
+      return boolEvaluated;
+    }
   };
 
   /// Base class for nodes with two sub nodes (i.e. functions or operators taking two arguments)
   class EBBinaryTermNode : public EBTermNode
   {
   public:
-    EBBinaryTermNode(EBTermNode * left, EBTermNode * right) : _left(left), _right(right){};
-    virtual ~EBBinaryTermNode()
-    {
-      delete _left;
-      delete _right;
-    };
+    EBBinaryTermNode(std::shared_ptr<EBTermNode> left, std::shared_ptr<EBTermNode> right) : _left(left), _right(right){};
+    virtual ~EBBinaryTermNode() {};
 
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
 
+    virtual void cleanUp()
+    {
+      simplified = NULL;
+      isSimplified = false;
+      derivative = NULL;
+      isEvaluated = false;
+      isBoolEvaluated = false;
+      if(_left->isEvaluated || _left->isBoolEvaluated)
+        _left->cleanUp();
+      if(_right->isEvaluated || _right->isBoolEvaluated)
+        _right->cleanUp();
+    }
+
   protected:
-    EBTermNode * _left;
-    EBTermNode * _right;
+    std::shared_ptr<EBTermNode> _left;
+    std::shared_ptr<EBTermNode> _right;
   };
 
   /// Node representing a binary operator
@@ -236,15 +461,16 @@ public:
       OR
     };
 
-    EBBinaryOpTermNode(EBTermNode * left, EBTermNode * right, NodeType type)
+    EBBinaryOpTermNode(std::shared_ptr<EBTermNode> left, std::shared_ptr<EBTermNode> right, NodeType type)
       : EBBinaryTermNode(left, right), _type(type){};
-    virtual EBBinaryOpTermNode * clone() const
-    {
-      return new EBBinaryOpTermNode(_left->clone(), _right->clone(), _type);
-    };
 
     virtual std::string stringify() const;
     virtual int precedence() const;
+
+    virtual std::shared_ptr<EBTermNode> simplify();
+    virtual std::shared_ptr<EBTermNode> takeDerivative();
+    virtual Real evaluate();
+    virtual bool boolEvaluate();
 
   protected:
     NodeType _type;
@@ -263,29 +489,67 @@ public:
       PLOG
     } _type;
 
-    EBBinaryFuncTermNode(EBTermNode * left, EBTermNode * right, NodeType type)
+    EBBinaryFuncTermNode(std::shared_ptr<EBTermNode> left, std::shared_ptr<EBTermNode> right, NodeType type)
       : EBBinaryTermNode(left, right), _type(type){};
-    virtual EBBinaryFuncTermNode * clone() const
-    {
-      return new EBBinaryFuncTermNode(_left->clone(), _right->clone(), _type);
-    };
 
     virtual std::string stringify() const;
     virtual int precedence() const { return 2; }
+
+    virtual std::shared_ptr<EBTermNode> simplify()
+    {
+      if(!isSimplified)
+      {
+        std::shared_ptr<EBTermNode> new_left = _left->simplify();
+        std::shared_ptr<EBTermNode> new_right = _right->simplify();
+        if(new_left == NULL)
+          _left = std::make_shared<EBNumberNode<int> >(0);
+        else if(_left != new_left)
+          _left = new_left;
+        if(new_right == NULL)
+          _right = std::make_shared<EBNumberNode<int> >(0);
+        else if(_right != new_right)
+          _right = new_right;
+        simplified = this->shared_from_this();
+        isSimplified = true;
+      }
+      return simplified;
+    }
+    virtual std::shared_ptr<EBTermNode> takeDerivative();
+    virtual Real evaluate();
+    virtual bool boolEvaluate()
+    {
+      mooseError("not a Real value");
+      return false;
+    }
   };
 
   /// Base class for nodes with two sub nodes (i.e. functions or operators taking two arguments)
   class EBTernaryTermNode : public EBBinaryTermNode
   {
   public:
-    EBTernaryTermNode(EBTermNode * left, EBTermNode * middle, EBTermNode * right)
+    EBTernaryTermNode(std::shared_ptr<EBTermNode> left, std::shared_ptr<EBTermNode> middle, std::shared_ptr<EBTermNode> right)
       : EBBinaryTermNode(left, right), _middle(middle){};
-    virtual ~EBTernaryTermNode() { delete _middle; };
+    virtual ~EBTernaryTermNode() {};
 
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
 
+    virtual void cleanUp()
+    {
+      simplified = NULL;
+      isSimplified = false;
+      derivative = NULL;
+      isEvaluated = false;
+      isBoolEvaluated = false;
+      if(_left->isEvaluated || _left->isBoolEvaluated)
+        _left->cleanUp();
+      if(_middle->isEvaluated || _middle->isBoolEvaluated)
+        _middle->cleanUp();
+      if(_right->isEvaluated || _right->isBoolEvaluated)
+        _right->cleanUp();
+    }
+
   protected:
-    EBTermNode * _middle;
+    std::shared_ptr<EBTermNode> _middle;
   };
 
   /// Node representing a function with three arguments
@@ -297,15 +561,65 @@ public:
       CONDITIONAL
     } _type;
 
-    EBTernaryFuncTermNode(EBTermNode * left, EBTermNode * middle, EBTermNode * right, NodeType type)
+    EBTernaryFuncTermNode(std::shared_ptr<EBTermNode> left, std::shared_ptr<EBTermNode> middle, std::shared_ptr<EBTermNode> right, NodeType type)
       : EBTernaryTermNode(left, middle, right), _type(type){};
-    virtual EBTernaryFuncTermNode * clone() const
-    {
-      return new EBTernaryFuncTermNode(_left->clone(), _middle->clone(), _right->clone(), _type);
-    };
 
     virtual std::string stringify() const;
     virtual int precedence() const { return 2; }
+
+    virtual std::shared_ptr<EBTermNode> simplify()
+    {
+      if(!isSimplified)
+      {
+        std::shared_ptr<EBTermNode> new_left = _left->simplify();
+        std::shared_ptr<EBTermNode> new_right = _right->simplify();
+        std::shared_ptr<EBTermNode> new_middle = _middle->simplify();
+        if(new_left == NULL)
+          _left = std::make_shared<EBNumberNode<int> >(0);
+        else if(_left != new_left)
+          _left = new_left;
+        if(new_middle == NULL)
+          _middle = std::make_shared<EBNumberNode<int> >(0);
+        else if(_middle != new_middle)
+          _middle = new_middle;
+        if(new_right == NULL)
+          _right = std::make_shared<EBNumberNode<int> >(0);
+        else if(_right != new_right)
+          _right = new_right;
+        simplified = this->shared_from_this();
+        isSimplified = true;
+      }
+      return simplified;
+    }
+    virtual std::shared_ptr<EBTermNode> takeDerivative()
+    {
+      if(derivative == NULL)
+      {
+        switch (_type)
+        {
+          case CONDITIONAL:
+            derivative = std::make_shared<EBTernaryFuncTermNode>(_left, _middle->takeDerivative(), _right->takeDerivative(), _type);
+        }
+      }
+      return derivative;
+    }
+
+    virtual Real evaluate()
+    {
+      if(!isEvaluated)
+      {
+        if(_left->boolEvaluate())
+          evaluated = _middle->evaluate();
+        else
+          evaluated = _right->evaluate();
+      }
+      return evaluated;
+    }
+    virtual bool boolEvaluate()
+    {
+      mooseError("Not a defined type");
+      return false;
+    }
   };
 
   /**
@@ -314,7 +628,7 @@ public:
   class EBSubstitutionRule
   {
   public:
-    virtual EBTermNode * apply(const EBTermNode *) const = 0;
+    virtual std::shared_ptr<EBTermNode> apply(const std::shared_ptr<EBTermNode>) const = 0;
     virtual ~EBSubstitutionRule() {}
   };
 
@@ -325,12 +639,12 @@ public:
   class EBSubstitutionRuleTyped : public EBSubstitutionRule
   {
   public:
-    virtual EBTermNode * apply(const EBTermNode *) const;
+    virtual std::shared_ptr<EBTermNode> apply(const std::shared_ptr<EBTermNode>) const;
 
   protected:
     // on successful substitution this returns a new node to replace the old one, otherwise it
     // returns NULL
-    virtual EBTermNode * substitute(const Node_T &) const = 0;
+    virtual std::shared_ptr<EBTermNode> substitute(const Node_T &) const = 0;
   };
 
   /**
@@ -341,11 +655,12 @@ public:
   {
   public:
     EBTermSubstitution(const EBTerm & find, const EBTerm & replace);
-    virtual ~EBTermSubstitution() { delete _replace; }
+    virtual ~EBTermSubstitution() {};
+
   protected:
-    virtual EBTermNode * substitute(const EBSymbolNode &) const;
+    virtual std::shared_ptr<EBTermNode> substitute(const EBSymbolNode &) const;
     std::string _find;
-    EBTermNode * _replace;
+    std::shared_ptr<EBTermNode> _replace;
   };
 
   /**
@@ -359,10 +674,11 @@ public:
     {
       mooseAssert(_epsilon != NULL, "Epsilon must not be an empty term in EBLogPlogSubstitution");
     }
-    virtual ~EBLogPlogSubstitution() { delete _epsilon; }
+    virtual ~EBLogPlogSubstitution() {};
+
   protected:
-    virtual EBTermNode * substitute(const EBUnaryFuncTermNode &) const;
-    EBTermNode * _epsilon;
+    virtual std::shared_ptr<EBTermNode> substitute(const EBUnaryFuncTermNode &) const;
+    std::shared_ptr<EBTermNode> _epsilon;
   };
 
   /**
@@ -377,20 +693,19 @@ public:
     // the default constructor assigns a temporary id node to root we use the address of the
     // current EBTerm object as the ID. This could be problematic if we create and destroy terms,
     // but then we should not expect the substitution to do sane things anyways.
-    EBTerm() : _root(new EBTempIDNode(reinterpret_cast<unsigned long>(this))){};
+    EBTerm() : _root(std::make_shared<EBTempIDNode>(reinterpret_cast<unsigned long>(this))){};
 
     EBTerm(const EBTerm & term) : _root(term.cloneRoot()){};
-    ~EBTerm() { delete _root; };
+    ~EBTerm() {};
 
-  private:
     // construct a term from a node
-    EBTerm(EBTermNode * root) : _root(root){};
+    EBTerm(std::shared_ptr<EBTermNode> root) : _root(root){};
 
   public:
     // construct from number or string
-    EBTerm(int number) : _root(new EBNumberNode<int>(number)) {}
-    EBTerm(Real number) : _root(new EBNumberNode<Real>(number)) {}
-    EBTerm(const char * symbol) : _root(new EBSymbolNode(symbol)) {}
+    EBTerm(int number) : _root(std::make_shared<EBNumberNode<int> >(number)) {}
+    EBTerm(Real number) : _root(std::make_shared<EBNumberNode<Real> >(number)) {}
+    EBTerm(const char * symbol) : _root(std::make_shared<EBSymbolNode>(symbol)) {}
 
     typedef std::vector<EBTerm> EBTermVector;
     static EBTermVector CreateEBTermVector(const std::string & var_name, unsigned int _op_num);
@@ -411,7 +726,6 @@ public:
     // assign a term
     EBTerm & operator=(const EBTerm & term)
     {
-      delete _root;
       _root = term.cloneRoot();
       return *this;
     }
@@ -420,11 +734,37 @@ public:
     unsigned int substitute(const EBSubstitutionRule & rule);
     unsigned int substitute(const EBSubstitutionRuleList & rules);
 
-    const EBTermNode * getRoot() const { return _root; }
-    EBTermNode * cloneRoot() const { return _root == NULL ? NULL : _root->clone(); }
+    const std::shared_ptr<EBTermNode> getRoot() const { return _root; }
+    std::shared_ptr<EBTermNode> cloneRoot() const { return _root; }
+
+    bool simplify()
+    {
+      _root = _root->simplify();
+      if(_root == NULL)
+      {
+        _root = std::make_shared<EBNumberNode<int> >(0);
+        return false;
+      }
+      return true;
+    }
+
+    EBTerm takeDerivative()
+    {
+      return _root->takeDerivative();
+    }
+
+    Real evaluate()
+    {
+      return _root->evaluate();
+    }
+
+    void cleanUp()
+    {
+      _root->cleanUp();
+    }
 
   protected:
-    EBTermNode * _root;
+    std::shared_ptr<EBTermNode> _root;
 
   public:
 /**
@@ -434,7 +774,7 @@ public:
   EBTerm operator op() const                                                                       \
   {                                                                                                \
     mooseAssert(_root != NULL, "Empty term provided for unary operator " #op);                     \
-    return EBTerm(new EBUnaryOpTermNode(cloneRoot(), EBUnaryOpTermNode::OP));                      \
+    return EBTerm(std::make_shared<EBUnaryOpTermNode>(cloneRoot(), EBUnaryOpTermNode::OP));                      \
   }
     UNARY_OP_IMPLEMENT(-, NEG)
     UNARY_OP_IMPLEMENT(!, LOGICNOT)
@@ -464,25 +804,25 @@ public:
   {                                                                                                \
     mooseAssert(_root != NULL, "Empty term provided on left side of operator " #op);               \
     mooseAssert(term._root != NULL, "Empty term provided on right side of operator " #op);         \
-    return EBTerm(new EBBinaryOpTermNode(cloneRoot(), term.cloneRoot(), EBBinaryOpTermNode::OP));  \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(cloneRoot(), term.cloneRoot(), EBBinaryOpTermNode::OP));  \
   }                                                                                                \
   friend EBTerm operator op(int left, const EBTerm & right)                                        \
   {                                                                                                \
     mooseAssert(right._root != NULL, "Empty term provided on right side of operator " #op);        \
-    return EBTerm(new EBBinaryOpTermNode(                                                          \
-        new EBNumberNode<int>(left), right.cloneRoot(), EBBinaryOpTermNode::OP));                  \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(                                            \
+        std::make_shared<EBNumberNode<int> >(left), right.cloneRoot(), EBBinaryOpTermNode::OP));   \
   }                                                                                                \
   friend EBTerm operator op(Real left, const EBTerm & right)                                       \
   {                                                                                                \
     mooseAssert(right._root != NULL, "Empty term provided on right side of operator " #op);        \
-    return EBTerm(new EBBinaryOpTermNode(                                                          \
-        new EBNumberNode<Real>(left), right.cloneRoot(), EBBinaryOpTermNode::OP));                 \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(                                            \
+        std::make_shared<EBNumberNode<Real> >(left), right.cloneRoot(), EBBinaryOpTermNode::OP));  \
   }                                                                                                \
   friend EBTerm operator op(const EBFunction & left, const EBTerm & right)                         \
   {                                                                                                \
     mooseAssert(EBTerm(left)._root != NULL, "Empty term provided on left side of operator " #op);  \
     mooseAssert(right._root != NULL, "Empty term provided on right side of operator " #op);        \
-    return EBTerm(new EBBinaryOpTermNode(                                                          \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(                                            \
         EBTerm(left).cloneRoot(), right.cloneRoot(), EBBinaryOpTermNode::OP));                     \
   }                                                                                                \
   friend EBTerm operator op(const EBFunction & left, const EBFunction & right);                    \
@@ -510,9 +850,9 @@ public:
   {                                                                                                \
     mooseAssert(_root != NULL, "Empty term provided on left side of operator " #op);               \
     mooseAssert(term._root != NULL, "Empty term provided on right side of operator " #op);         \
-    if (dynamic_cast<EBTempIDNode *>(_root))                                                       \
+    if (std::dynamic_pointer_cast<EBTempIDNode>(_root))                                                       \
       mooseError("Using compound assignment operator on anonymous term. Set it to 0 first!");      \
-    _root = new EBBinaryOpTermNode(_root, term.cloneRoot(), EBBinaryOpTermNode::OP);               \
+    _root = std::make_shared<EBBinaryOpTermNode>(_root, term.cloneRoot(), EBBinaryOpTermNode::OP);               \
     return *this;                                                                                  \
   }
     BINARYCOMP_OP_IMPLEMENT(+=, ADD)
@@ -541,9 +881,9 @@ public:
 
     friend EBTerm conditional(const EBTerm &, const EBTerm &, const EBTerm &);
     /*
-    friend EBVectorFunction conditional(const EBTerm &, const EBVectorFunction &, const EBVectorFunction &);
-    friend EBMatrixFunction conditional(const EBTerm &, const EBMatrixFunction &, const EBMatrixFunction &);
-    friend EBQuaternionFunction conditional(const EBTerm &, const EBQuaternionFunction &, const EBQuaternionFunction &);
+    friend EBVector conditional(const EBTerm &, const EBVector &, const EBVector &);
+    friend EBMatrix conditional(const EBTerm &, const EBMatrix &, const EBMatrix &);
+    friend EBQuaternion conditional(const EBTerm &, const EBQuaternion &, const EBQuaternion &);
     */
   };
 
@@ -659,40 +999,47 @@ public:
     EBTerm _term;
   };
 
-  class EBMatrixFunction
+  class EBMatrix
   {
   public:
-    EBMatrixFunction();
-    EBMatrixFunction(std::vector<std::vector<EBTerm> > FunctionMatrix);
-    EBMatrixFunction(unsigned int i, unsigned int j);
-    EBMatrixFunction(const RealTensorValue & rhs);
+    EBMatrix();
+    EBMatrix(std::vector<std::vector<EBTerm> > FunctionMatrix);
+    EBMatrix(unsigned int i, unsigned int j);
+    EBMatrix(const RealTensorValue & rhs);
 
-    operator EBQuaternionFunction() const;
+    operator EBQuaternion() const;
     //operator MaterialPropertyVariable<RankTwoTensor>() const;
     operator std::vector<std::vector<std::string> >() const;
-    friend EBMatrixFunction & operator*(const EBMatrixFunction & lhs, const EBMatrixFunction & rhs);
-    friend EBMatrixFunction & operator*(const Real & lhs, const EBMatrixFunction & rhs);
-    friend EBMatrixFunction & operator*(const EBMatrixFunction & lhs, const Real & rhs);
-    friend EBMatrixFunction & operator*(const EBTerm & lhs, const EBMatrixFunction & rhs);
-    friend EBMatrixFunction & operator*(const EBMatrixFunction & lhs, const EBTerm & rhs);
-    friend EBMatrixFunction & operator/(const EBMatrixFunction & lhs, const EBTerm & rhs);
-    friend EBMatrixFunction & operator/(const EBMatrixFunction & lhs, const Real & rhs);
-    friend EBMatrixFunction & operator+(const EBMatrixFunction & lhs, const EBMatrixFunction & rhs);
-    friend EBMatrixFunction & operator-(const EBMatrixFunction & lhs, const EBMatrixFunction & rhs);
-    EBMatrixFunction & operator+=(const EBMatrixFunction & rhs);
-    EBMatrixFunction & operator-();
+    friend EBMatrix & operator*(const EBMatrix & lhs, const EBMatrix & rhs);
+    friend EBMatrix & operator*(const Real & lhs, const EBMatrix & rhs);
+    friend EBMatrix & operator*(const EBMatrix & lhs, const Real & rhs);
+    friend EBMatrix & operator*(const EBTerm & lhs, const EBMatrix & rhs);
+    friend EBMatrix & operator*(const EBMatrix & lhs, const EBTerm & rhs);
+    friend EBMatrix & operator/(const EBMatrix & lhs, const EBTerm & rhs);
+    friend EBMatrix & operator/(const EBMatrix & lhs, const Real & rhs);
+    friend EBMatrix & operator+(const EBMatrix & lhs, const EBMatrix & rhs);
+    friend EBMatrix & operator-(const EBMatrix & lhs, const EBMatrix & rhs);
+    EBMatrix & operator+=(const EBMatrix & rhs);
+    EBMatrix & operator-();
     std::vector<EBTerm> & operator[](unsigned int i);
     const std::vector<EBTerm> & operator[](unsigned int i) const;
-    EBMatrixFunction transpose();
+    EBMatrix transpose();
 
     unsigned int rowNum() const;
     unsigned int colNum() const;
     void setSize(const unsigned int i, const unsigned int j); //Erases the entire matrix
-    static EBMatrixFunction rotVec1ToVec2(EBVectorFunction & Vec1, EBVectorFunction & Vec2);
-    static EBMatrixFunction rotVecToZ(EBVectorFunction & Vec);
+    static EBMatrix rotVec1ToVec2(EBVector & Vec1, EBVector & Vec2);
+    static EBMatrix rotVecToZ(EBVector & Vec);
 
-    void checkMultSize(const EBMatrixFunction & lhs, const EBMatrixFunction & rhs);
-    static void checkAddSize(const EBMatrixFunction & lhs, const EBMatrixFunction & rhs);
+    void checkMultSize(const EBMatrix & lhs, const EBMatrix & rhs);
+    static void checkAddSize(const EBMatrix & lhs, const EBMatrix & rhs);
+
+    void simplify()
+    {
+      for(unsigned int i = 0; i < _rowNum; ++i)
+        for(unsigned int j = 0; j < _colNum; ++j)
+          FunctionMatrix[i][j].simplify();
+    }
 
   private:
     void checkSize();
@@ -702,50 +1049,56 @@ public:
     unsigned int _colNum;
   };
 
-  class EBVectorFunction //3D vectors only, else use EBMatrixFunction
+  class EBVector //3D vectors only, else use EBMatrix
   {
   public:
-    EBVectorFunction();
-    EBVectorFunction(Real i, Real j, Real k)
+    EBVector();
+    EBVector(Real i, Real j, Real k)
     {
       FunctionVector.push_back(EBTerm(i));
       FunctionVector.push_back(EBTerm(j));
       FunctionVector.push_back(EBTerm(k));
     }
-    EBVectorFunction(EBTerm i, EBTerm j, EBTerm k)
+    EBVector(EBTerm i, EBTerm j, EBTerm k)
     {
       FunctionVector.push_back(i);
       FunctionVector.push_back(j);
       FunctionVector.push_back(k);
     }
-    EBVectorFunction(std::vector<EBTerm> FunctionVector);
-    EBVectorFunction(std::vector<std::string> FunctionNameVector);
+    EBVector(std::vector<EBTerm> FunctionVector);
+    EBVector(std::vector<std::string> FunctionNameVector);
 
-    typedef std::vector<EBVectorFunction> EBVectorVector;
+    typedef std::vector<EBVector> EBVectorVector;
     static EBVectorVector CreateEBVectorVector(const std::string & var_name, unsigned int _op_num);
 
-    EBVectorFunction & operator=(const RealVectorValue & rhs);
+    EBVector & operator=(const RealVectorValue & rhs);
     operator std::vector<std::string>() const;
-    friend EBTerm & operator*(const EBVectorFunction & lhs, const EBVectorFunction & rhs); // This defines a dot product
-    friend EBVectorFunction & operator*(const EBVectorFunction & lhs, const Real & rhs);
-    friend EBVectorFunction & operator*(const Real & lhs, const EBVectorFunction & rhs);
-    friend EBVectorFunction & operator*(const EBTerm & lhs, const EBVectorFunction & rhs);
-    friend EBVectorFunction & operator*(const EBVectorFunction & lhs, const EBTerm & rhs);
-    friend EBVectorFunction & operator*(const EBVectorFunction & lhs, const EBMatrixFunction & rhs); // We assume the vector is 1 x 3 here
-    friend EBVectorFunction & operator*(const EBMatrixFunction & lhs, const EBVectorFunction & rhs); // We assume the vector is 3 x 1 here
-    friend EBVectorFunction & operator/(const EBVectorFunction & lhs, const Real & rhs);
-    friend EBVectorFunction & operator/(const EBVectorFunction & lhs, const EBTerm & rhs);
-    friend EBVectorFunction & operator+(const EBVectorFunction & lhs, const EBVectorFunction & rhs);
-    friend EBVectorFunction & operator-(const EBVectorFunction & lhs, const EBVectorFunction & rhs);
-    EBVectorFunction & operator+=(const EBVectorFunction & rhs);
-    EBVectorFunction & operator-();
+    friend EBTerm & operator*(const EBVector & lhs, const EBVector & rhs); // This defines a dot product
+    friend EBVector & operator*(const EBVector & lhs, const Real & rhs);
+    friend EBVector & operator*(const Real & lhs, const EBVector & rhs);
+    friend EBVector & operator*(const EBTerm & lhs, const EBVector & rhs);
+    friend EBVector & operator*(const EBVector & lhs, const EBTerm & rhs);
+    friend EBVector & operator*(const EBVector & lhs, const EBMatrix & rhs); // We assume the vector is 1 x 3 here
+    friend EBVector & operator*(const EBMatrix & lhs, const EBVector & rhs); // We assume the vector is 3 x 1 here
+    friend EBVector & operator/(const EBVector & lhs, const Real & rhs);
+    friend EBVector & operator/(const EBVector & lhs, const EBTerm & rhs);
+    friend EBVector & operator+(const EBVector & lhs, const EBVector & rhs);
+    friend EBVector & operator-(const EBVector & lhs, const EBVector & rhs);
+    EBVector & operator+=(const EBVector & rhs);
+    EBVector & operator-();
     EBTerm & operator[](unsigned int i);
     const EBTerm & operator[](unsigned int i) const;
-    //operator EBMatrixFunction();
+    //operator EBMatrix();
 
-    static EBVectorFunction cross(const EBVectorFunction & lhs, const EBVectorFunction & rhs);
+    static EBVector cross(const EBVector & lhs, const EBVector & rhs);
     EBTerm norm();
     void push_back(EBTerm term);
+
+    void simplify()
+    {
+      for(unsigned int i = 0; i < 3; ++i)
+        FunctionVector[i].simplify();
+    }
 
   private:
     void checkSize(std::vector<std::string> FunctionVector);
@@ -754,27 +1107,27 @@ public:
     std::vector<EBTerm> FunctionVector;
   };
 
-  class EBQuaternionFunction
+  class EBQuaternion
   {
   public:
-    EBQuaternionFunction() {
+    EBQuaternion() {
       FunctionQuat = std::vector<EBTerm>(4);
     };
-    EBQuaternionFunction(std::vector<EBTerm> FunctionQuat);
+    EBQuaternion(std::vector<EBTerm> FunctionQuat);
 
-    friend EBQuaternionFunction & operator*(const EBQuaternionFunction & lhs, const EBQuaternionFunction & rhs);
-    friend EBQuaternionFunction & operator*(const EBQuaternionFunction & lhs, const Real & rhs);
-    friend EBQuaternionFunction & operator*(const Real & lhs, const EBQuaternionFunction & rhs);
-    friend EBQuaternionFunction & operator*(const EBQuaternionFunction & lhs, const EBTerm & rhs);
-    friend EBQuaternionFunction & operator*(const EBTerm & lhs, const EBQuaternionFunction & rhs);
-    friend EBQuaternionFunction & operator/(const EBQuaternionFunction & lhs, const Real & rhs);
-    friend EBQuaternionFunction & operator/(const EBQuaternionFunction & lhs, const EBTerm & rhs);
-    friend EBQuaternionFunction & operator+(const EBQuaternionFunction & lhs, const EBQuaternionFunction & rhs);
-    friend EBQuaternionFunction & operator-(const EBQuaternionFunction & lhs, const EBQuaternionFunction & rhs);
-    EBQuaternionFunction & operator-(const EBQuaternionFunction & rhs);
+    friend EBQuaternion & operator*(const EBQuaternion & lhs, const EBQuaternion & rhs);
+    friend EBQuaternion & operator*(const EBQuaternion & lhs, const Real & rhs);
+    friend EBQuaternion & operator*(const Real & lhs, const EBQuaternion & rhs);
+    friend EBQuaternion & operator*(const EBQuaternion & lhs, const EBTerm & rhs);
+    friend EBQuaternion & operator*(const EBTerm & lhs, const EBQuaternion & rhs);
+    friend EBQuaternion & operator/(const EBQuaternion & lhs, const Real & rhs);
+    friend EBQuaternion & operator/(const EBQuaternion & lhs, const EBTerm & rhs);
+    friend EBQuaternion & operator+(const EBQuaternion & lhs, const EBQuaternion & rhs);
+    friend EBQuaternion & operator-(const EBQuaternion & lhs, const EBQuaternion & rhs);
+    EBQuaternion & operator-(const EBQuaternion & rhs);
     EBTerm & operator[](unsigned int i);
     const EBTerm & operator[](unsigned int i) const;
-    operator EBMatrixFunction() const;
+    operator EBMatrix() const;
 
     EBTerm norm();
 
@@ -793,22 +1146,22 @@ public:
     mooseAssert(EBTerm(left)._root != NULL, "Empty term provided on left side of operator " #op);  \
     mooseAssert(EBTerm(right)._root != NULL,                                                       \
                 "Empty term provided on right side of operator " #op);                             \
-    return EBTerm(new EBBinaryOpTermNode(                                                          \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(                                                          \
         EBTerm(left).cloneRoot(), EBTerm(right).cloneRoot(), EBBinaryOpTermNode::OP));             \
   }                                                                                                \
   friend EBTerm operator op(int left, const EBFunction & right)                                    \
   {                                                                                                \
     mooseAssert(EBTerm(right)._root != NULL,                                                       \
                 "Empty term provided on right side of operator " #op);                             \
-    return EBTerm(new EBBinaryOpTermNode(                                                          \
-        new EBNumberNode<int>(left), EBTerm(right).cloneRoot(), EBBinaryOpTermNode::OP));          \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(                                                          \
+        std::make_shared<EBNumberNode<int> >(left), EBTerm(right).cloneRoot(), EBBinaryOpTermNode::OP));          \
   }                                                                                                \
   friend EBTerm operator op(Real left, const EBFunction & right)                                   \
   {                                                                                                \
     mooseAssert(EBTerm(right)._root != NULL,                                                       \
                 "Empty term provided on right side of operator " #op);                             \
-    return EBTerm(new EBBinaryOpTermNode(                                                          \
-        new EBNumberNode<Real>(left), EBTerm(right).cloneRoot(), EBBinaryOpTermNode::OP));         \
+    return EBTerm(std::make_shared<EBBinaryOpTermNode>(                                                          \
+        std::make_shared<EBNumberNode<Real> >(left), EBTerm(right).cloneRoot(), EBBinaryOpTermNode::OP));         \
   }
   BINARYFUNC_OP_IMPLEMENT(+, ADD)
   BINARYFUNC_OP_IMPLEMENT(-, SUB)
@@ -821,8 +1174,8 @@ public:
   BINARYFUNC_OP_IMPLEMENT(>=, GREATEREQ)
   BINARYFUNC_OP_IMPLEMENT(==, EQ)
   BINARYFUNC_OP_IMPLEMENT(!=, NOTEQ)
-  BINARYFUNC_OP_IMPLEMENT(||, OR)
   BINARYFUNC_OP_IMPLEMENT(&&, AND)
+  BINARYFUNC_OP_IMPLEMENT(||, OR)
 };
 
 // convenience function for numeric exponent
@@ -831,8 +1184,8 @@ ExpressionBuilder::EBTerm
 pow(const ExpressionBuilder::EBTerm & left, T exponent)
 {
   return ExpressionBuilder::EBTerm(
-      new ExpressionBuilder::EBBinaryOpTermNode(left.cloneRoot(),
-                                                new ExpressionBuilder::EBNumberNode<T>(exponent),
+      std::make_shared<ExpressionBuilder::EBBinaryOpTermNode>(left.cloneRoot(),
+                                                std::make_shared<ExpressionBuilder::EBNumberNode<T> >(exponent),
                                                 ExpressionBuilder::EBBinaryOpTermNode::POW));
 }
 
@@ -847,11 +1200,11 @@ ExpressionBuilder::EBNumberNode<T>::stringify() const
 }
 
 template <class Node_T>
-ExpressionBuilder::EBTermNode *
+std::shared_ptr<ExpressionBuilder::EBTermNode>
 ExpressionBuilder::EBSubstitutionRuleTyped<Node_T>::apply(
-    const ExpressionBuilder::EBTermNode * node) const
+    const std::shared_ptr<ExpressionBuilder::EBTermNode> node) const
 {
-  const Node_T * match_node = dynamic_cast<const Node_T *>(node);
+  const std::shared_ptr<Node_T> match_node = std::dynamic_pointer_cast<Node_T>(node);
   if (match_node == NULL)
     return NULL;
   else

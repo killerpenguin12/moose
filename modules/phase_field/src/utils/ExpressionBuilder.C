@@ -9,44 +9,8 @@
 
 #include "ExpressionBuilder.h"
 
-ExpressionBuilder::EBTerm
-ExpressionBuilder::setEBMaterialPropertyReal(const std::string & name)
-{
-  EBTerm new_term(name.c_str());
-  MatType type = Re;
-  _mat_prop_info.push_back(std::pair<std::string, MatType>(name,type));
-  return new_term;
-}
-
-ExpressionBuilder::EBVectorFunction
-ExpressionBuilder::setEBMaterialPropertyRealVectorValue(const std::string & name)
-{
-  EBVectorFunction new_term;
-  new_term[0] = EBTerm((name + "x").c_str());
-  new_term[1] = EBTerm((name + "y").c_str());
-  new_term[2] = EBTerm((name + "z").c_str());
-  MatType type = ReVecVal;
-  _mat_prop_info.push_back(std::pair<std::string, MatType>(name, type));
-  return new_term;
-}
-
-ExpressionBuilder::EBMatrixFunction
-ExpressionBuilder::setEBMaterialPropertyRankTwoTensor(const std::string & name)
-{
-  EBMatrixFunction new_term(3,3);
-  new_term[0][0] = EBTerm((name + "xx").c_str());
-  new_term[0][1] = EBTerm((name + "xy").c_str());
-  new_term[0][2] = EBTerm((name + "xz").c_str());
-  new_term[1][0] = EBTerm((name + "yx").c_str());
-  new_term[1][1] = EBTerm((name + "yy").c_str());
-  new_term[1][2] = EBTerm((name + "yz").c_str());
-  new_term[2][0] = EBTerm((name + "zx").c_str());
-  new_term[2][1] = EBTerm((name + "zy").c_str());
-  new_term[2][2] = EBTerm((name + "zz").c_str());
-  MatType type = RTwoTens;
-  _mat_prop_info.push_back(std::pair<std::string, MatType>(name,type));
-  return new_term;
-}
+std::shared_ptr<ExpressionBuilder::EBTermNode> ExpressionBuilder::derivative_of;
+unsigned int ExpressionBuilder::current_quad_point;
 
 ExpressionBuilder::EBTermList
 operator, (const ExpressionBuilder::EBTerm & larg, const ExpressionBuilder::EBTerm & rarg)
@@ -96,7 +60,7 @@ ExpressionBuilder::EBTempIDNode::stringify() const
 std::string
 ExpressionBuilder::EBUnaryFuncTermNode::stringify() const
 {
-  const char * name[] = {"sin", "cos", "tan", "abs", "log", "log2", "log10", "exp", "sinh", "cosh", "sqrt"};
+  const char * name[] = {"sin", "cos", "tan", "abs", "log", "log2", "log10", "exp", "sinh", "cosh", "sqrt", "acos", "atan"};
   std::ostringstream s;
   s << name[_type] << '(' << *_subnode << ')';
   return s.str();
@@ -130,7 +94,7 @@ ExpressionBuilder::EBBinaryFuncTermNode::stringify() const
 std::string
 ExpressionBuilder::EBBinaryOpTermNode::stringify() const
 {
-  const char * name[] = {"+", "-", "*", "/", "%", "^", "<", ">", "<=", ">=", "=", "!="};
+  const char * name[] = {"+", "-", "*", "/", "%", "^", "<", ">", "<=", ">=", "=", "!=", "&&", "||"};
   std::ostringstream s;
 
   if (_left->precedence() > precedence())
@@ -285,7 +249,7 @@ ExpressionBuilder::EBFunction::substitute(const EBSubstitutionRuleList & rules)
   ExpressionBuilder::EBTerm op(const ExpressionBuilder::EBTerm & term)                             \
   {                                                                                                \
     mooseAssert(term._root != NULL, "Empty term provided as argument of function " #op "()");      \
-    return ExpressionBuilder::EBTerm(new ExpressionBuilder::EBUnaryFuncTermNode(                   \
+    return ExpressionBuilder::EBTerm(std::make_shared<ExpressionBuilder::EBUnaryFuncTermNode>(                   \
         term.cloneRoot(), ExpressionBuilder::EBUnaryFuncTermNode::OP));                            \
   }
 UNARY_FUNC_IMPLEMENT(sin, SIN)
@@ -299,6 +263,8 @@ UNARY_FUNC_IMPLEMENT(exp, EXP)
 UNARY_FUNC_IMPLEMENT(sinh, SINH)
 UNARY_FUNC_IMPLEMENT(cosh, COSH)
 UNARY_FUNC_IMPLEMENT(sqrt, SQRT)
+UNARY_FUNC_IMPLEMENT(acos, ACOS)
+UNARY_FUNC_IMPLEMENT(atan, ATAN)
 
 #define BINARY_FUNC_IMPLEMENT(op, OP)                                                              \
   ExpressionBuilder::EBTerm op(const ExpressionBuilder::EBTerm & left,                             \
@@ -308,7 +274,7 @@ UNARY_FUNC_IMPLEMENT(sqrt, SQRT)
                 "Empty term provided as first argument of function " #op "()");                    \
     mooseAssert(right._root != NULL,                                                               \
                 "Empty term provided as second argument of function " #op "()");                   \
-    return ExpressionBuilder::EBTerm(new ExpressionBuilder::EBBinaryFuncTermNode(                  \
+    return ExpressionBuilder::EBTerm(std::make_shared<ExpressionBuilder::EBBinaryFuncTermNode>(                  \
         left.cloneRoot(), right.cloneRoot(), ExpressionBuilder::EBBinaryFuncTermNode::OP));        \
   }
 BINARY_FUNC_IMPLEMENT(min, MIN)
@@ -323,7 +289,7 @@ pow(const ExpressionBuilder::EBTerm & left, const ExpressionBuilder::EBTerm & ri
 {
   mooseAssert(left._root != NULL, "Empty term for base of pow()");
   mooseAssert(right._root != NULL, "Empty term for exponent of pow()");
-  return ExpressionBuilder::EBTerm(new ExpressionBuilder::EBBinaryOpTermNode(
+  return ExpressionBuilder::EBTerm(std::make_shared<ExpressionBuilder::EBBinaryOpTermNode>(
       left.cloneRoot(), right.cloneRoot(), ExpressionBuilder::EBBinaryOpTermNode::POW));
 }
 
@@ -338,73 +304,13 @@ pow(const ExpressionBuilder::EBTerm & left, const ExpressionBuilder::EBTerm & ri
                 "Empty term provided as second argument of the ternary function " #op "()");       \
     mooseAssert(right._root != NULL,                                                               \
                 "Empty term provided as third argument of the ternary function " #op "()");        \
-    return ExpressionBuilder::EBTerm(new ExpressionBuilder::EBTernaryFuncTermNode(                 \
+    return ExpressionBuilder::EBTerm(std::make_shared<ExpressionBuilder::EBTernaryFuncTermNode>(                 \
         left.cloneRoot(),                                                                          \
         middle.cloneRoot(),                                                                        \
         right.cloneRoot(),                                                                         \
         ExpressionBuilder::EBTernaryFuncTermNode::OP));                                            \
   }
-  /* Need to make constructor for new classes with EBTernaryFuncTermNodes as well as constructor for that
-  ExpressionBuilder::EBVectorFunction op(const ExpressionBuilder::EBTerm & left,                   \
-                               const ExpressionBuilder::EBVectorFunction & middle,                 \
-                               const ExpressionBuilder::EBVectorFunction & right)                  \
-  {                                                                                                \
-    mooseAssert(left._root != NULL,                                                                \
-                "Empty term provided as first argument of the ternary function " #op "()");        \
-    mooseAssert(middle[0]._root != NULL,                                                           \
-                "Empty term provided as second argument of the ternary function " #op "()");       \
-    mooseAssert(right[0]._root != NULL,                                                            \
-                "Empty term provided as third argument of the ternary function " #op "()");        \
-    ExpressionBuilder::EBVectorFunction result;                                                    \
-    for(unsigned int i = 0; i < 3; ++i)                                                            \
-      result.push_back(ExpressionBuilder::EBTerm(new ExpressionBuilder::EBTernaryFuncTermNode(     \
-          left.cloneRoot(),                                                                        \
-          middle[i].cloneRoot(),                                                                   \
-          right[i].cloneRoot(),                                                                    \
-          ExpressionBuilder::EBTernaryFuncTermNode::OP)));                                         \
-    return result;                                                                                 \
-  }
-  ExpressionBuilder::EBMatrixFunction op(const ExpressionBuilder::EBTerm & left,                   \
-                               const ExpressionBuilder::EBMatrixFunction & middle,                 \
-                               const ExpressionBuilder::EBMatrixFunction & right)                  \
-  {                                                                                                \
-    mooseAssert(left._root != NULL,                                                                \
-                "Empty term provided as first argument of the ternary function " #op "()");        \
-    mooseAssert(middle._root != NULL,                                                              \
-                "Empty term provided as second argument of the ternary function " #op "()");       \
-    mooseAssert(right._root != NULL,                                                               \
-                "Empty term provided as third argument of the ternary function " #op "()");        \
-    ExpressionBuilder::EBMatrixFunction::checkAddSize(middle,right);                               \
-    ExpressionBuilder::EBMatrixFunction result(middle.rowNum(), middle.colNum());                                     \
-    for(unsigned int i = 0; i < middle.rowNum(); ++i)                                                       \
-      for(unsigned int j = 0; j < middle.colNum(); ++j)                                                     \
-        result[i][j] = ExpressionBuilder::EBTerm(new ExpressionBuilder::EBTernaryFuncTermNode(     \
-                                                 left.cloneRoot(),                                 \
-                                                 middle[i][j].cloneRoot(),                         \
-                                                 right[i][j].cloneRoot(),                          \
-                                                 ExpressionBuilder::EBTernaryFuncTermNode::OP));   \
-    return result;                                                                                 \
-  }
-  ExpressionBuilder::EBQuaternionFunction op(const ExpressionBuilder::EBTerm & left,               \
-                               const ExpressionBuilder::EBQuaternionFunction & middle,             \
-                               const ExpressionBuilder::EBQuaternionFunction & right)              \
-  {                                                                                                \
-    mooseAssert(left._root != NULL,                                                                \
-                "Empty term provided as first argument of the ternary function " #op "()");        \
-    mooseAssert(middle._root != NULL,                                                              \
-                "Empty term provided as second argument of the ternary function " #op "()");       \
-    mooseAssert(right._root != NULL,                                                               \
-                "Empty term provided as third argument of the ternary function " #op "()");        \
-    ExpressionBuilder::EBQuaternionFunction result;                                                \
-    for(unsigned int i = 0; i < 4; ++i)                                                            \
-      result[i] = ExpressionBuilder::EBTerm(new ExpressionBuilder::EBTernaryFuncTermNode(          \
-          left.cloneRoot(),                                                                        \
-          middle[i].cloneRoot(),                                                                   \
-          right[i].cloneRoot(),                                                                    \
-          ExpressionBuilder::EBTernaryFuncTermNode::OP));                                          \
-    return result;                                                                                 \
-  }
-  */
+
 TERNARY_FUNC_IMPLEMENT(conditional, CONDITIONAL)
 
 unsigned int
@@ -414,10 +320,9 @@ ExpressionBuilder::EBUnaryTermNode::substitute(const EBSubstitutionRuleList & ru
 
   for (unsigned int i = 0; i < nrule; ++i)
   {
-    EBTermNode * replace = rules[i]->apply(_subnode);
+    std::shared_ptr<EBTermNode> replace = rules[i]->apply(_subnode);
     if (replace != NULL)
     {
-      delete _subnode;
       _subnode = replace;
       return 1;
     }
@@ -434,10 +339,9 @@ ExpressionBuilder::EBBinaryTermNode::substitute(const EBSubstitutionRuleList & r
 
   for (unsigned int i = 0; i < nrule; ++i)
   {
-    EBTermNode * replace = rules[i]->apply(_left);
+    std::shared_ptr<EBTermNode> replace = rules[i]->apply(_left);
     if (replace != NULL)
     {
-      delete _left;
       _left = replace;
       success = 1;
       break;
@@ -449,10 +353,9 @@ ExpressionBuilder::EBBinaryTermNode::substitute(const EBSubstitutionRuleList & r
 
   for (unsigned int i = 0; i < nrule; ++i)
   {
-    EBTermNode * replace = rules[i]->apply(_right);
+    std::shared_ptr<EBTermNode> replace = rules[i]->apply(_right);
     if (replace != NULL)
     {
-      delete _right;
       _right = replace;
       return success + 1;
     }
@@ -466,14 +369,13 @@ ExpressionBuilder::EBTernaryTermNode::substitute(const EBSubstitutionRuleList & 
 {
   unsigned int nrule = rules.size();
   bool left_success = false, middle_success = false, right_success = false;
-  EBTermNode * replace;
+  std::shared_ptr<EBTermNode> replace;
 
   for (unsigned int i = 0; i < nrule; ++i)
   {
     replace = rules[i]->apply(_left);
     if (replace)
     {
-      delete _left;
       _left = replace;
       left_success = true;
       break;
@@ -485,7 +387,6 @@ ExpressionBuilder::EBTernaryTermNode::substitute(const EBSubstitutionRuleList & 
     replace = rules[i]->apply(_middle);
     if (replace)
     {
-      delete _middle;
       _middle = replace;
       middle_success = true;
       break;
@@ -497,7 +398,6 @@ ExpressionBuilder::EBTernaryTermNode::substitute(const EBSubstitutionRuleList & 
     replace = rules[i]->apply(_right);
     if (replace)
     {
-      delete _right;
       _right = replace;
       right_success = true;
       break;
@@ -532,10 +432,9 @@ ExpressionBuilder::EBTerm::substitute(const EBSubstitutionRuleList & rules)
 
   for (unsigned int i = 0; i < nrule; ++i)
   {
-    EBTermNode * replace = rules[i]->apply(_root);
+    std::shared_ptr<EBTermNode> replace = rules[i]->apply(_root);
     if (replace != NULL)
     {
-      delete _root;
       _root = replace;
       return 1;
     }
@@ -548,7 +447,7 @@ ExpressionBuilder::EBTermSubstitution::EBTermSubstitution(const EBTerm & find,
                                                           const EBTerm & replace)
 {
   // the expression we want to substitute (has to be a symbol node)
-  const EBSymbolNode * find_root = dynamic_cast<const EBSymbolNode *>(find.getRoot());
+  const std::shared_ptr<EBSymbolNode> find_root = std::dynamic_pointer_cast<EBSymbolNode>(find.getRoot());
   if (find_root == NULL)
     mooseError("Function arguments must be pure symbols.");
   _find = find_root->stringify();
@@ -560,21 +459,21 @@ ExpressionBuilder::EBTermSubstitution::EBTermSubstitution(const EBTerm & find,
     mooseError("Trying to substitute in an empty term for ", _find);
 }
 
-ExpressionBuilder::EBTermNode *
+std::shared_ptr<ExpressionBuilder::EBTermNode>
 ExpressionBuilder::EBTermSubstitution::substitute(const EBSymbolNode & node) const
 {
   if (node.stringify() == _find)
-    return _replace->clone();
+    return _replace;
   else
     return NULL;
 }
 
-ExpressionBuilder::EBTermNode *
+std::shared_ptr<ExpressionBuilder::EBTermNode>
 ExpressionBuilder::EBLogPlogSubstitution::substitute(const EBUnaryFuncTermNode & node) const
 {
   if (node._type == EBUnaryFuncTermNode::LOG)
-    return new EBBinaryFuncTermNode(
-        node.getSubnode()->clone(), _epsilon->clone(), EBBinaryFuncTermNode::PLOG);
+    return std::make_shared<EBBinaryFuncTermNode>(
+        node.getSubnode(), _epsilon, EBBinaryFuncTermNode::PLOG);
   else
     return NULL;
 }
@@ -591,14 +490,14 @@ ExpressionBuilder::EBTerm::CreateEBTermVector(const std::string & var_name, unsi
   return vec;
 }
 
-ExpressionBuilder::EBMatrixFunction::EBMatrixFunction()
+ExpressionBuilder::EBMatrix::EBMatrix()
 {
   _rowNum = 0;
   _colNum = 0;
   setSize(0, 0);
 }
 
-ExpressionBuilder::EBMatrixFunction::EBMatrixFunction(std::vector<std::vector <ExpressionBuilder::EBTerm> > FunctionMatrix)
+ExpressionBuilder::EBMatrix::EBMatrix(std::vector<std::vector <ExpressionBuilder::EBTerm> > FunctionMatrix)
 {
   this->FunctionMatrix = FunctionMatrix;
   _rowNum = FunctionMatrix.size();
@@ -606,12 +505,12 @@ ExpressionBuilder::EBMatrixFunction::EBMatrixFunction(std::vector<std::vector <E
   checkSize();
 }
 
-ExpressionBuilder::EBMatrixFunction::EBMatrixFunction(unsigned int i, unsigned int j)
+ExpressionBuilder::EBMatrix::EBMatrix(unsigned int i, unsigned int j)
 {
   setSize(i,j);
 }
 
-ExpressionBuilder::EBMatrixFunction::EBMatrixFunction(const RealTensorValue & rhs)
+ExpressionBuilder::EBMatrix::EBMatrix(const RealTensorValue & rhs)
 {
   this->setSize(3,3);
   for(unsigned int i = 0; i < 3; ++i)
@@ -619,10 +518,10 @@ ExpressionBuilder::EBMatrixFunction::EBMatrixFunction(const RealTensorValue & rh
       (*this)[i][j] = EBTerm(rhs(i,j));
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator*(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix &
+operator*(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
-  ExpressionBuilder::EBMatrixFunction * result = new ExpressionBuilder::EBMatrixFunction();
+  ExpressionBuilder::EBMatrix * result = new ExpressionBuilder::EBMatrix();
   result->checkMultSize(lhs,rhs);
   result->setSize(lhs.rowNum(),rhs.colNum());
   for(unsigned int i = 0; i < lhs.rowNum(); ++i)
@@ -632,10 +531,10 @@ operator*(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuild
   return *result;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator*(const Real & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix &
+operator*(const Real & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
-  ExpressionBuilder::EBMatrixFunction * result = new ExpressionBuilder::EBMatrixFunction();
+  ExpressionBuilder::EBMatrix * result = new ExpressionBuilder::EBMatrix();
   result->setSize(rhs.rowNum(),rhs.colNum());
   for(unsigned int i = 0; i < rhs.rowNum(); ++i)
     for(unsigned int j = 0; j < rhs.colNum(); ++j)
@@ -643,16 +542,16 @@ operator*(const Real & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
   return *result;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator*(const ExpressionBuilder::EBMatrixFunction & lhs, const Real & rhs)
+ExpressionBuilder::EBMatrix &
+operator*(const ExpressionBuilder::EBMatrix & lhs, const Real & rhs)
 {
   return rhs * lhs;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix &
+operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
-  ExpressionBuilder::EBMatrixFunction * result = new ExpressionBuilder::EBMatrixFunction();
+  ExpressionBuilder::EBMatrix * result = new ExpressionBuilder::EBMatrix();
   result->setSize(rhs.rowNum(),rhs.colNum());
   for(unsigned int i = 0; i < rhs.rowNum(); ++i)
     for(unsigned int j = 0; j < rhs.colNum(); ++j)
@@ -660,16 +559,16 @@ operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBMatr
   return *result;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator*(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBTerm & rhs)
+ExpressionBuilder::EBMatrix &
+operator*(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBTerm & rhs)
 {
   return rhs * lhs;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator/(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBTerm & rhs)
+ExpressionBuilder::EBMatrix &
+operator/(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBTerm & rhs)
 {
-  ExpressionBuilder::EBMatrixFunction * result = new ExpressionBuilder::EBMatrixFunction();
+  ExpressionBuilder::EBMatrix * result = new ExpressionBuilder::EBMatrix();
   result->setSize(lhs.rowNum(),lhs.colNum());
   for(unsigned int i = 0; i < lhs.rowNum(); ++i)
     for(unsigned int j = 0; j < lhs.colNum(); ++j)
@@ -677,10 +576,10 @@ operator/(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuild
   return *result;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator/(const ExpressionBuilder::EBMatrixFunction & lhs, const Real & rhs)
+ExpressionBuilder::EBMatrix &
+operator/(const ExpressionBuilder::EBMatrix & lhs, const Real & rhs)
 {
-  ExpressionBuilder::EBMatrixFunction * result = new ExpressionBuilder::EBMatrixFunction();
+  ExpressionBuilder::EBMatrix * result = new ExpressionBuilder::EBMatrix();
   result->setSize(lhs.rowNum(),lhs.colNum());
   for(unsigned int i = 0; i < lhs.rowNum(); ++i)
     for(unsigned int j = 0; j < lhs.colNum(); ++j)
@@ -688,10 +587,10 @@ operator/(const ExpressionBuilder::EBMatrixFunction & lhs, const Real & rhs)
   return *result;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator+(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix &
+operator+(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
-  ExpressionBuilder::EBMatrixFunction * result = new ExpressionBuilder::EBMatrixFunction();
+  ExpressionBuilder::EBMatrix * result = new ExpressionBuilder::EBMatrix();
   result->checkAddSize(rhs,lhs);
   result->setSize(rhs.rowNum(),rhs.colNum());
   for(unsigned int i = 0; i < rhs.rowNum(); ++i)
@@ -700,17 +599,16 @@ operator+(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuild
   return *result;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-operator-(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix &
+operator-(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
   return lhs + (-1 * rhs);
 }
 
-ExpressionBuilder::EBMatrixFunction::operator ExpressionBuilder::EBQuaternionFunction() const
+ExpressionBuilder::EBMatrix::operator ExpressionBuilder::EBQuaternion() const
 {
   Real _epsilon = 0.0001;
-  EBQuaternionFunction newQuat;
-  std::cout << (*this).FunctionMatrix.size() << (*this).FunctionMatrix[0].size() << std::endl;
+  EBQuaternion newQuat;
   ExpressionBuilder::EBTerm temp = (*this)[0][0] + (*this)[1][1] + (*this)[2][2];
 
   newQuat[0] = conditional(temp > -(1.0 - _epsilon), sqrt(1.0 + temp) / 2.0, EBTerm(0.0));
@@ -729,7 +627,7 @@ ExpressionBuilder::EBMatrixFunction::operator ExpressionBuilder::EBQuaternionFun
   return newQuat;
 }
 
-ExpressionBuilder::EBMatrixFunction::operator std::vector<std::vector<std::string> >() const
+ExpressionBuilder::EBMatrix::operator std::vector<std::vector<std::string> >() const
 {
   std::vector<std::vector<std::string> > sVec;
   for(unsigned int i = 0; i < _rowNum; ++i)
@@ -742,38 +640,38 @@ ExpressionBuilder::EBMatrixFunction::operator std::vector<std::vector<std::strin
   return sVec;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-ExpressionBuilder::EBMatrixFunction::operator+=(const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix &
+ExpressionBuilder::EBMatrix::operator+=(const ExpressionBuilder::EBMatrix & rhs)
 {
   return *this + rhs;
 }
 
-ExpressionBuilder::EBMatrixFunction &
-ExpressionBuilder::EBMatrixFunction::operator-()
+ExpressionBuilder::EBMatrix &
+ExpressionBuilder::EBMatrix::operator-()
 {
   return (-1) * (*this);
 }
 
 std::vector <ExpressionBuilder::EBTerm> &
-ExpressionBuilder::EBMatrixFunction::operator[](unsigned int i)
+ExpressionBuilder::EBMatrix::operator[](unsigned int i)
 {
-  if(i < 0 || i > _rowNum)
+  if(i > _rowNum)
   {} //MooseError
 
   return FunctionMatrix[i];
 }
 
 const std::vector <ExpressionBuilder::EBTerm> &
-ExpressionBuilder::EBMatrixFunction::operator[](unsigned int i) const
+ExpressionBuilder::EBMatrix::operator[](unsigned int i) const
 {
-  if(i < 0 || i > _rowNum)
+  if(i > _rowNum)
   {} //MooseError
 
   return FunctionMatrix[i];
 }
 
-ExpressionBuilder::EBMatrixFunction
-ExpressionBuilder::EBMatrixFunction::transpose()
+ExpressionBuilder::EBMatrix
+ExpressionBuilder::EBMatrix::transpose()
 {
   for(unsigned int i = 0; i < _rowNum; ++i)
     for(unsigned int j = i + 1; j < _colNum; ++j)
@@ -786,7 +684,7 @@ ExpressionBuilder::EBMatrixFunction::transpose()
 }
 
 void
-ExpressionBuilder::EBMatrixFunction::checkSize()
+ExpressionBuilder::EBMatrix::checkSize()
 {
   for(unsigned int i = 0; i < _rowNum; ++i)
     if(FunctionMatrix[i].size() != _colNum)
@@ -794,19 +692,19 @@ ExpressionBuilder::EBMatrixFunction::checkSize()
 }
 
 unsigned int
-ExpressionBuilder::EBMatrixFunction::rowNum() const
+ExpressionBuilder::EBMatrix::rowNum() const
 {
   return _rowNum;
 }
 
 unsigned int
-ExpressionBuilder::EBMatrixFunction::colNum() const
+ExpressionBuilder::EBMatrix::colNum() const
 {
   return _colNum;
 }
 
 void
-ExpressionBuilder::EBMatrixFunction::setSize(const unsigned int i, const unsigned int j)
+ExpressionBuilder::EBMatrix::setSize(const unsigned int i, const unsigned int j)
 {
   _rowNum = i;
   _colNum = j;
@@ -816,21 +714,21 @@ ExpressionBuilder::EBMatrixFunction::setSize(const unsigned int i, const unsigne
       FunctionMatrix[k].push_back(EBTerm(0));
 }
 
-ExpressionBuilder::EBMatrixFunction
-ExpressionBuilder::EBMatrixFunction::rotVec1ToVec2(ExpressionBuilder::EBVectorFunction & Vec1, ExpressionBuilder::EBVectorFunction & Vec2)
+ExpressionBuilder::EBMatrix
+ExpressionBuilder::EBMatrix::rotVec1ToVec2(ExpressionBuilder::EBVector & Vec1, ExpressionBuilder::EBVector & Vec2)
 {
-  EBMatrixFunction rot1_to_z = rotVecToZ(Vec1);
-  EBMatrixFunction rot2_to_z = rotVecToZ(Vec2);
+  EBMatrix rot1_to_z = rotVecToZ(Vec1);
+  EBMatrix rot2_to_z = rotVecToZ(Vec2);
   return (rot2_to_z.transpose()) * rot1_to_z;
 }
 
-ExpressionBuilder::EBMatrixFunction
-ExpressionBuilder::EBMatrixFunction::rotVecToZ(ExpressionBuilder::EBVectorFunction & Vec)
+ExpressionBuilder::EBMatrix
+ExpressionBuilder::EBMatrix::rotVecToZ(ExpressionBuilder::EBVector & Vec)
 {
-  Vec = Vec / Vec.ExpressionBuilder::EBVectorFunction::norm();
+  Vec = Vec / Vec.ExpressionBuilder::EBVector::norm();
 
-  ExpressionBuilder::EBVectorFunction v1;
-  ExpressionBuilder::EBVectorFunction w;
+  ExpressionBuilder::EBVector v1;
+  ExpressionBuilder::EBVector w;
 
   w[0] = abs(Vec[0]);
   w[1] = abs(Vec[1]);
@@ -841,14 +739,14 @@ ExpressionBuilder::EBMatrixFunction::rotVecToZ(ExpressionBuilder::EBVectorFuncti
   v1[2] = conditional((v1[1] == 0.0 && v1[1] == 0.0),1.0,0.0);
 
   v1 = v1 - (v1 * Vec) * Vec;
-  v1 = v1 / v1.ExpressionBuilder::EBVectorFunction::norm();
+  v1 = v1 / v1.ExpressionBuilder::EBVector::norm();
 
-  ExpressionBuilder::EBVectorFunction v0;
+  ExpressionBuilder::EBVector v0;
   v0[0] = v1[1] * Vec[2] - v1[2] * Vec[1];
   v0[1] = v1[2] * Vec[0] - v1[0] * Vec[2];
   v0[2] = v1[0] * Vec[1] - v1[1] * Vec[0];
 
-  ExpressionBuilder::EBMatrixFunction newMat(3,3);
+  ExpressionBuilder::EBMatrix newMat(3,3);
 
   newMat[0][0] = v0[0];
   newMat[0][1] = v0[1];
@@ -864,14 +762,14 @@ ExpressionBuilder::EBMatrixFunction::rotVecToZ(ExpressionBuilder::EBVectorFuncti
 }
 
 void
-ExpressionBuilder::EBMatrixFunction::checkMultSize(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix::checkMultSize(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
   if(lhs.colNum() != rhs.rowNum())
   {} //MooseError
 }
 
 void
-ExpressionBuilder::EBMatrixFunction::checkAddSize(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBMatrixFunction & rhs)
+ExpressionBuilder::EBMatrix::checkAddSize(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBMatrix & rhs)
 {
   if(lhs.colNum() != rhs.colNum())
   {} //MooseError
@@ -879,7 +777,7 @@ ExpressionBuilder::EBMatrixFunction::checkAddSize(const ExpressionBuilder::EBMat
   {} //MooseError
 }
 
-ExpressionBuilder::EBVectorFunction::EBVectorFunction()
+ExpressionBuilder::EBVector::EBVector()
 {
   for(int i = 0; i < 3; ++i)
   {
@@ -887,23 +785,23 @@ ExpressionBuilder::EBVectorFunction::EBVectorFunction()
   }
 }
 
-ExpressionBuilder::EBVectorFunction::EBVectorFunction(std::vector<EBTerm> FunctionVector)
+ExpressionBuilder::EBVector::EBVector(std::vector<EBTerm> FunctionVector)
 {
   checkSize(FunctionVector);
   this->FunctionVector = FunctionVector;
 }
 
-ExpressionBuilder::EBVectorFunction::EBVectorFunction(std::vector<std::string> FunctionNameVector)
+ExpressionBuilder::EBVector::EBVector(std::vector<std::string> FunctionNameVector)
 {
   checkSize(FunctionNameVector);
   for(int i = 0; i < 3; ++i)
     this->FunctionVector.push_back(EBTerm(FunctionNameVector[i].c_str()));
 }
 
-ExpressionBuilder::EBVectorFunction &
-ExpressionBuilder::EBVectorFunction::operator=(const RealVectorValue & rhs)
+ExpressionBuilder::EBVector &
+ExpressionBuilder::EBVector::operator=(const RealVectorValue & rhs)
 {
-  EBVectorFunction * result = new EBVectorFunction;
+  EBVector * result = new EBVector;
   for(unsigned int i = 0; i < 3; ++i)
   {
     (*result)[i] = EBTerm(rhs(i));
@@ -911,13 +809,13 @@ ExpressionBuilder::EBVectorFunction::operator=(const RealVectorValue & rhs)
   return (*result);
 }
 
-ExpressionBuilder::EBVectorFunction::EBVectorVector
-ExpressionBuilder::EBVectorFunction::CreateEBVectorVector(const std::string & var_name, unsigned int _op_num)
+ExpressionBuilder::EBVector::EBVectorVector
+ExpressionBuilder::EBVector::CreateEBVectorVector(const std::string & var_name, unsigned int _op_num)
 {
   EBVectorVector vec;
   for(unsigned int i = 0; i < _op_num; ++i)
   {
-    EBVectorFunction temp;
+    EBVector temp;
     EBTerm tempx((var_name + std::to_string(i) + "x").c_str());
     EBTerm tempy((var_name + std::to_string(i) + "y").c_str());
     EBTerm tempz((var_name + std::to_string(i) = "z").c_str());
@@ -929,7 +827,7 @@ ExpressionBuilder::EBVectorFunction::CreateEBVectorVector(const std::string & va
   return vec;
 }
 
-ExpressionBuilder::EBVectorFunction::operator std::vector<std::string>() const
+ExpressionBuilder::EBVector::operator std::vector<std::string>() const
 {
   std::vector<std::string> sVec;
   for(unsigned int i = 0; i < 3; ++i)
@@ -938,72 +836,72 @@ ExpressionBuilder::EBVectorFunction::operator std::vector<std::string>() const
 }
 
 ExpressionBuilder::EBTerm &
-operator*(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBVectorFunction & rhs)
+operator*(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBVector & rhs)
 {
-  ExpressionBuilder::EBTerm * result = new ExpressionBuilder::EBTerm;
+  ExpressionBuilder::EBTerm * result = new ExpressionBuilder::EBTerm(0);
   for(unsigned int i = 0; i < 3; ++i)
     *result = *result + lhs[i] * rhs[i];
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator*(const ExpressionBuilder::EBVectorFunction & lhs, const Real & rhs)
+ExpressionBuilder::EBVector &
+operator*(const ExpressionBuilder::EBVector & lhs, const Real & rhs)
 {
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
     (*result)[i] = rhs * lhs[i];
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator*(const Real & lhs, const ExpressionBuilder::EBVectorFunction & rhs)
+ExpressionBuilder::EBVector &
+operator*(const Real & lhs, const ExpressionBuilder::EBVector & rhs)
 {
   return rhs * lhs;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBVectorFunction & rhs)
+ExpressionBuilder::EBVector &
+operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBVector & rhs)
 {
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
     (*result)[i] = rhs[i] * lhs;
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator*(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBTerm & rhs)
+ExpressionBuilder::EBVector &
+operator*(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBTerm & rhs)
 {
   return rhs * lhs;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator*(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBMatrixFunction & rhs) // We assume the vector is 1 x 3 here
+ExpressionBuilder::EBVector &
+operator*(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBMatrix & rhs) // We assume the vector is 1 x 3 here
 {
   if(rhs.rowNum() != 3)
   {} // MooseError
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
     for(unsigned int j =0; j < 3; ++j)
       (*result)[i] = (*result)[i] + lhs[j] * rhs[j][i];
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator*(const ExpressionBuilder::EBMatrixFunction & lhs, const ExpressionBuilder::EBVectorFunction & rhs) // We assume the vector is 3 x 1 here
+ExpressionBuilder::EBVector &
+operator*(const ExpressionBuilder::EBMatrix & lhs, const ExpressionBuilder::EBVector & rhs) // We assume the vector is 3 x 1 here
 {
   if(lhs.colNum() != 3)
   {} // MooseError
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
     for(unsigned int j =0; j < 3; ++j)
       (*result)[i] = (*result)[i] + lhs[i][j] * rhs[j];
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator/(const ExpressionBuilder::EBVectorFunction & lhs, const Real & rhs)
+ExpressionBuilder::EBVector &
+operator/(const ExpressionBuilder::EBVector & lhs, const Real & rhs)
 {
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
   {
     (*result)[i] = (1/rhs) * lhs[i];
@@ -1011,58 +909,58 @@ operator/(const ExpressionBuilder::EBVectorFunction & lhs, const Real & rhs)
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator/(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBTerm & rhs)
+ExpressionBuilder::EBVector &
+operator/(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBTerm & rhs)
 {
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
     (*result)[i] = lhs[i] / rhs;
   return (*result);
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator+(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBVectorFunction & rhs)
+ExpressionBuilder::EBVector &
+operator+(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBVector & rhs)
 {
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   for(unsigned int i = 0; i < 3; ++i)
     (*result)[i] = lhs[i] + rhs[i];
   return *result;
 }
 
-ExpressionBuilder::EBVectorFunction &
-operator-(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBVectorFunction & rhs)
+ExpressionBuilder::EBVector &
+operator-(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBVector & rhs)
 {
   return lhs + ((-1) * rhs);
 }
 
-ExpressionBuilder::EBVectorFunction &
-ExpressionBuilder::EBVectorFunction::operator+=(const ExpressionBuilder::EBVectorFunction & rhs)
+ExpressionBuilder::EBVector &
+ExpressionBuilder::EBVector::operator+=(const ExpressionBuilder::EBVector & rhs)
 {
   return rhs + *this;
 }
 
-ExpressionBuilder::EBVectorFunction &
-ExpressionBuilder::EBVectorFunction::operator-()
+ExpressionBuilder::EBVector &
+ExpressionBuilder::EBVector::operator-()
 {
   return (-1) * (*this);
 }
 
 ExpressionBuilder::EBTerm &
-ExpressionBuilder::EBVectorFunction::operator[](unsigned int i)
+ExpressionBuilder::EBVector::operator[](unsigned int i)
 {
   return FunctionVector[i];
 }
 
 const ExpressionBuilder::EBTerm &
-ExpressionBuilder::EBVectorFunction::operator[](unsigned int i) const
+ExpressionBuilder::EBVector::operator[](unsigned int i) const
 {
   return FunctionVector[i];
 }
 
-ExpressionBuilder::EBVectorFunction
-ExpressionBuilder::EBVectorFunction::cross(const ExpressionBuilder::EBVectorFunction & lhs, const ExpressionBuilder::EBVectorFunction & rhs)
+ExpressionBuilder::EBVector
+ExpressionBuilder::EBVector::cross(const ExpressionBuilder::EBVector & lhs, const ExpressionBuilder::EBVector & rhs)
 {
-  ExpressionBuilder::EBVectorFunction * result = new ExpressionBuilder::EBVectorFunction;
+  ExpressionBuilder::EBVector * result = new ExpressionBuilder::EBVector;
   (*result)[0] = lhs[1] * rhs[2] - lhs[2] * rhs[1];
   (*result)[1] = lhs[0] * rhs[2] - lhs[2] * rhs[0];
   (*result)[2] = lhs[0] * rhs[1] - lhs[1] * rhs[0];
@@ -1070,13 +968,13 @@ ExpressionBuilder::EBVectorFunction::cross(const ExpressionBuilder::EBVectorFunc
 }
 
 ExpressionBuilder::EBTerm
-ExpressionBuilder::EBVectorFunction::norm()
+ExpressionBuilder::EBVector::norm()
 {
   return sqrt(*this * *this);
 }
 
 void
-ExpressionBuilder::EBVectorFunction::push_back(EBTerm term)
+ExpressionBuilder::EBVector::push_back(EBTerm term)
 {
   FunctionVector.push_back(term);
   if(FunctionVector.size() > 3)
@@ -1084,28 +982,28 @@ ExpressionBuilder::EBVectorFunction::push_back(EBTerm term)
 }
 
 void
-ExpressionBuilder::EBVectorFunction::checkSize(std::vector<EBTerm> FunctionVector)
+ExpressionBuilder::EBVector::checkSize(std::vector<EBTerm> FunctionVector)
 {
   if(FunctionVector.size() != 3)
   {} // MooseError
 }
 
 void
-ExpressionBuilder::EBVectorFunction::checkSize(std::vector<std::string> FunctionVector)
+ExpressionBuilder::EBVector::checkSize(std::vector<std::string> FunctionVector)
 {
   if(FunctionVector.size() != 3)
   {} // MooseError
 }
 
-ExpressionBuilder::EBQuaternionFunction::EBQuaternionFunction(std::vector<ExpressionBuilder::EBTerm> FunctionQuat)
+ExpressionBuilder::EBQuaternion::EBQuaternion(std::vector<ExpressionBuilder::EBTerm> FunctionQuat)
 {
   this->FunctionQuat = FunctionQuat;
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator*(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionBuilder::EBQuaternionFunction & rhs)
+ExpressionBuilder::EBQuaternion &
+operator*(const ExpressionBuilder::EBQuaternion & lhs, const ExpressionBuilder::EBQuaternion & rhs)
 {
-  ExpressionBuilder::EBQuaternionFunction * result = new ExpressionBuilder::EBQuaternionFunction;
+  ExpressionBuilder::EBQuaternion * result = new ExpressionBuilder::EBQuaternion;
   (*result)[0] = lhs[0] * rhs[0] - lhs[1] * rhs[1] - lhs[2] * rhs[2] - lhs[3] * rhs[3];
   (*result)[1] = lhs[0] * rhs[1] + lhs[1] * rhs[0] + lhs[2] * rhs[3] - lhs[3] * rhs[2];
   (*result)[2] = lhs[0] * rhs[2] - lhs[1] * rhs[3] + lhs[2] * rhs[0] + lhs[3] * rhs[1];
@@ -1113,10 +1011,10 @@ operator*(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionB
   return *result;
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator*(const ExpressionBuilder::EBQuaternionFunction & lhs, const Real & rhs)
+ExpressionBuilder::EBQuaternion &
+operator*(const ExpressionBuilder::EBQuaternion & lhs, const Real & rhs)
 {
-  ExpressionBuilder::EBQuaternionFunction * result = new ExpressionBuilder::EBQuaternionFunction;
+  ExpressionBuilder::EBQuaternion * result = new ExpressionBuilder::EBQuaternion;
   for(unsigned int i = 0; i < 4; ++i)
   {
     (*result)[i] = lhs[i] * rhs;
@@ -1124,16 +1022,16 @@ operator*(const ExpressionBuilder::EBQuaternionFunction & lhs, const Real & rhs)
   return (*result);
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator*(const Real & lhs, const ExpressionBuilder::EBQuaternionFunction & rhs)
+ExpressionBuilder::EBQuaternion &
+operator*(const Real & lhs, const ExpressionBuilder::EBQuaternion & rhs)
 {
   return rhs * lhs;
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator*(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionBuilder::EBTerm & rhs)
+ExpressionBuilder::EBQuaternion &
+operator*(const ExpressionBuilder::EBQuaternion & lhs, const ExpressionBuilder::EBTerm & rhs)
 {
-  ExpressionBuilder::EBQuaternionFunction * result = new ExpressionBuilder::EBQuaternionFunction;
+  ExpressionBuilder::EBQuaternion * result = new ExpressionBuilder::EBQuaternion;
   for(unsigned int i = 0; i < 4; ++i)
   {
     (*result)[i] = lhs[i] * rhs;
@@ -1141,28 +1039,28 @@ operator*(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionB
   return (*result);
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBQuaternionFunction & rhs)
+ExpressionBuilder::EBQuaternion &
+operator*(const ExpressionBuilder::EBTerm & lhs, const ExpressionBuilder::EBQuaternion & rhs)
 {
   return rhs * lhs;
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator/(const ExpressionBuilder::EBQuaternionFunction & lhs, const Real & rhs)
+ExpressionBuilder::EBQuaternion &
+operator/(const ExpressionBuilder::EBQuaternion & lhs, const Real & rhs)
 {
   return (1/rhs) * lhs;
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator/(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionBuilder::EBTerm & rhs)
+ExpressionBuilder::EBQuaternion &
+operator/(const ExpressionBuilder::EBQuaternion & lhs, const ExpressionBuilder::EBTerm & rhs)
 {
   return (1/rhs) * lhs;
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator+(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionBuilder::EBQuaternionFunction & rhs)
+ExpressionBuilder::EBQuaternion &
+operator+(const ExpressionBuilder::EBQuaternion & lhs, const ExpressionBuilder::EBQuaternion & rhs)
 {
-  ExpressionBuilder::EBQuaternionFunction * result = new ExpressionBuilder::EBQuaternionFunction;
+  ExpressionBuilder::EBQuaternion * result = new ExpressionBuilder::EBQuaternion;
   for(unsigned int i = 0; i < 4; ++i)
   {
     (*result)[i] = lhs[i] + rhs[i];
@@ -1170,33 +1068,33 @@ operator+(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionB
   return (*result);
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-operator-(const ExpressionBuilder::EBQuaternionFunction & lhs, const ExpressionBuilder::EBQuaternionFunction & rhs)
+ExpressionBuilder::EBQuaternion &
+operator-(const ExpressionBuilder::EBQuaternion & lhs, const ExpressionBuilder::EBQuaternion & rhs)
 {
   return lhs + ((-1) * rhs);
 }
 
-ExpressionBuilder::EBQuaternionFunction &
-ExpressionBuilder::EBQuaternionFunction::operator-(const ExpressionBuilder::EBQuaternionFunction & rhs)
+ExpressionBuilder::EBQuaternion &
+ExpressionBuilder::EBQuaternion::operator-(const ExpressionBuilder::EBQuaternion & rhs)
 {
   return (-1) * rhs;
 }
 
 ExpressionBuilder::EBTerm &
-ExpressionBuilder::EBQuaternionFunction::operator[](unsigned int i)
+ExpressionBuilder::EBQuaternion::operator[](unsigned int i)
 {
   return FunctionQuat[i];
 }
 
 const ExpressionBuilder::EBTerm &
-ExpressionBuilder::EBQuaternionFunction::operator[](unsigned int i) const
+ExpressionBuilder::EBQuaternion::operator[](unsigned int i) const
 {
   return FunctionQuat[i];
 }
 
-ExpressionBuilder::EBQuaternionFunction::operator ExpressionBuilder::EBMatrixFunction() const
+ExpressionBuilder::EBQuaternion::operator ExpressionBuilder::EBMatrix() const
 {
-  EBMatrixFunction newMat(3,3);
+  EBMatrix newMat(3,3);
   newMat[0][0] = (*this)[0] * (*this)[0] + (*this)[1] * (*this)[1] - (*this)[2] * (*this)[2] - (*this)[3] * (*this)[3];
   newMat[0][1] = 2 * (*this)[1] * (*this)[2] - 2 * (*this)[0] * (*this)[3];
   newMat[0][2] = 2 * (*this)[1] * (*this)[3] + 2 * (*this)[0] * (*this)[2];
@@ -1213,7 +1111,7 @@ ExpressionBuilder::EBQuaternionFunction::operator ExpressionBuilder::EBMatrixFun
 }
 
 ExpressionBuilder::EBTerm
-ExpressionBuilder::EBQuaternionFunction::norm()
+ExpressionBuilder::EBQuaternion::norm()
 {
   ExpressionBuilder::EBTerm temp;
   temp = (*this)[0] * (*this)[0];
@@ -1225,8 +1123,608 @@ ExpressionBuilder::EBQuaternionFunction::norm()
 }
 
 void
-ExpressionBuilder::EBQuaternionFunction::checkSize(std::vector<EBTerm> FunctionQuat)
+ExpressionBuilder::EBQuaternion::checkSize(std::vector<EBTerm> FunctionQuat)
 {
   if(FunctionQuat.size() != 4)
   {} //MooseError
+}
+
+/******************
+ *
+ * Simplification and Derivative Rules
+ *
+ ******************/
+
+std::shared_ptr<ExpressionBuilder::EBTermNode>
+ExpressionBuilder::EBUnaryFuncTermNode::simplify()
+{
+  if(!isSimplified)
+  {
+    std::shared_ptr<EBTermNode> new_sub = _subnode->simplify();
+    if(new_sub == NULL)
+    {
+      _subnode = std::make_shared<EBNumberNode<int> >(0);
+      if(_type == SIN || _type == TAN || _type == ABS || _type == SINH || _type == SQRT || _type == ATAN)
+      {
+        simplified = NULL;
+        isSimplified = true;
+        return simplified;
+      }
+    }
+    else if(_subnode != new_sub)
+      _subnode = new_sub;
+    simplified = this->shared_from_this();
+    isSimplified = true;
+  }
+  return simplified;
+}
+
+std::shared_ptr<ExpressionBuilder::EBTermNode>
+ExpressionBuilder::EBBinaryOpTermNode::simplify()
+{
+  if(!isSimplified)
+  {
+    std::shared_ptr<EBTermNode> new_left = _left->simplify();
+    std::shared_ptr<EBTermNode> new_right = _right->simplify();
+    if(new_left == NULL)
+    {
+      _left = std::make_shared<EBNumberNode<int> >(0);
+      if(_type == MUL || _type == DIV)
+      {
+        simplified = NULL;
+        isSimplified = true;
+        return simplified;
+      }
+      if(new_right == NULL)
+      {
+        _right = std::make_shared<EBNumberNode<int> >(0);
+        if(_type == ADD || _type == SUB)
+        {
+          simplified = NULL;
+          isSimplified = true;
+          return simplified;
+        }
+      }
+      if(_type == ADD)
+      {
+        simplified = _right;
+        isSimplified = true;
+        return simplified;
+      }
+    }
+    else if(_left != new_left)
+      _left = new_left;
+    if(new_right == NULL)
+    {
+      _right = std::make_shared<EBNumberNode<int> >(0);
+      if(_type == MUL)
+      {
+        simplified = NULL;
+        isSimplified = true;
+        return simplified;
+      }
+      if(_type == ADD || _type == SUB)
+      {
+        simplified = _left;
+        isSimplified = true;
+        return simplified;
+      }
+    }
+    else if(_right != new_right)
+      _right = new_right;
+    simplified = this->shared_from_this();
+    isSimplified = true;
+  }
+  return simplified;
+}
+
+std::shared_ptr<ExpressionBuilder::EBTermNode>
+ExpressionBuilder::EBUnaryFuncTermNode::takeDerivative()
+{
+  if(derivative == NULL)
+  {
+    std::shared_ptr<EBTermNode> temp;
+    switch (_type)
+    {
+      case SIN:
+      {
+        temp = std::make_shared<EBUnaryFuncTermNode>(_subnode, NodeType::COS);
+        break;
+      }
+      case COS:
+      {
+        std::shared_ptr<EBUnaryFuncTermNode> temp2 = std::make_shared<EBUnaryFuncTermNode>(_subnode, NodeType::SIN);
+        temp = std::make_shared<EBUnaryOpTermNode>(temp2, EBUnaryOpTermNode::NodeType::NEG);
+        break;
+      }
+      case TAN:
+      {
+        std::shared_ptr<EBUnaryFuncTermNode> temp3 = std::make_shared<EBUnaryFuncTermNode>(_subnode, NodeType::COS);
+        std::shared_ptr<EBBinaryOpTermNode> temp2 = std::make_shared<EBBinaryOpTermNode>(temp3, temp3, EBBinaryOpTermNode::NodeType::MUL);
+        temp = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp2, EBBinaryOpTermNode::NodeType::DIV);
+        break;
+      }
+      case ABS:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(_subnode, this->shared_from_this(), EBBinaryOpTermNode::NodeType::DIV);
+        break;
+      }
+      case LOG:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), _subnode, EBBinaryOpTermNode::NodeType::DIV);
+        break;
+      }
+      case LOG2:
+      {
+        std::shared_ptr<EBBinaryOpTermNode> temp2 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), _subnode, EBBinaryOpTermNode::NodeType::DIV);
+        temp = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0 / log(2.0)), temp2, EBBinaryOpTermNode::NodeType::MUL);
+        break;
+      }
+      case LOG10:
+      {
+        std::shared_ptr<EBBinaryOpTermNode> temp2 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), _subnode, EBBinaryOpTermNode::NodeType::DIV);
+        temp = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0 / log(10.0)), temp2, EBBinaryOpTermNode::NodeType::MUL);
+        break;
+      }
+      case EXP:
+      {
+        temp = this->shared_from_this();
+        break;
+      }
+      case SINH:
+      {
+        temp = std::make_shared<EBUnaryFuncTermNode>(_subnode, NodeType::COSH);
+        break;
+      }
+      case COSH:
+      {
+        temp = std::make_shared<EBUnaryFuncTermNode>(_subnode, NodeType::SINH);
+        break;
+      }
+      case SQRT:
+      {
+        std::shared_ptr<EBBinaryOpTermNode> temp2 = std::make_shared<EBBinaryOpTermNode>(this->shared_from_this(), std::make_shared<EBNumberNode<Real> >(2.0), EBBinaryOpTermNode::NodeType::MUL);
+        temp = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp2, EBBinaryOpTermNode::NodeType::DIV);
+        break;
+      }
+      case ACOS:
+      {
+        std::shared_ptr<EBBinaryOpTermNode> temp4  = std::make_shared<EBBinaryOpTermNode>(_subnode, _subnode, EBBinaryOpTermNode::NodeType::MUL);
+        std::shared_ptr<EBBinaryOpTermNode> temp3 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp4, EBBinaryOpTermNode::NodeType::SUB);
+        std::shared_ptr<EBBinaryOpTermNode> temp2 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp3, EBBinaryOpTermNode::NodeType::DIV);
+        temp = std::make_shared<EBUnaryOpTermNode>(temp2, EBUnaryOpTermNode::NodeType::NEG);
+        break;
+      }
+      case ATAN:
+      {
+        std::shared_ptr<EBBinaryOpTermNode> temp3  = std::make_shared<EBBinaryOpTermNode>(_subnode, _subnode, EBBinaryOpTermNode::NodeType::MUL);
+        std::shared_ptr<EBBinaryOpTermNode> temp2 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp3, EBBinaryOpTermNode::NodeType::ADD);
+        temp = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp2, EBBinaryOpTermNode::NodeType::DIV);
+        break;
+      }
+    }
+    derivative = std::make_shared<EBBinaryOpTermNode>(temp, _subnode->takeDerivative(), EBBinaryOpTermNode::NodeType::MUL);
+  }
+  return derivative;
+}
+
+std::shared_ptr<ExpressionBuilder::EBTermNode>
+ExpressionBuilder::EBBinaryOpTermNode::takeDerivative()
+{
+  if(derivative == NULL)
+  {
+    switch (_type)
+    {
+      case ADD:
+      {
+        derivative = std::make_shared<EBBinaryOpTermNode>(_left->takeDerivative(), _right->takeDerivative(), NodeType::ADD);
+        break;
+      }
+      case SUB:
+      {
+        derivative = std::make_shared<EBBinaryOpTermNode>(_left->takeDerivative(), _right->takeDerivative(), NodeType::SUB);
+        break;
+      }
+      case MUL:
+      {
+        std::shared_ptr<EBBinaryOpTermNode>temp = std::make_shared<EBBinaryOpTermNode>(_left->takeDerivative(), _right, NodeType::MUL);
+        std::shared_ptr<EBBinaryOpTermNode>temp2 = std::make_shared<EBBinaryOpTermNode>(_left, _right->takeDerivative(), NodeType::MUL);
+        derivative = std::make_shared<EBBinaryOpTermNode>(temp, temp2, NodeType::ADD);
+        break;
+      }
+      case DIV:
+      {
+        std::shared_ptr<EBBinaryOpTermNode>temp = std::make_shared<EBBinaryOpTermNode>(_right, _left->takeDerivative(), NodeType::MUL);
+        std::shared_ptr<EBBinaryOpTermNode>temp2 = std::make_shared<EBBinaryOpTermNode>(_left, _right->takeDerivative(), NodeType::MUL);
+        std::shared_ptr<EBBinaryOpTermNode>temp3 = std::make_shared<EBBinaryOpTermNode>(temp, temp2, NodeType::SUB);
+        std::shared_ptr<EBBinaryOpTermNode>temp4 = std::make_shared<EBBinaryOpTermNode>(_right, _right, NodeType::MUL);
+        derivative = std::make_shared<EBBinaryOpTermNode>(temp3, temp4, DIV);
+        break;
+      }
+      case MOD:
+      {
+        derivative = _left->takeDerivative();
+        break;
+      }
+      case POW:
+      {
+        std::shared_ptr<EBBinaryOpTermNode> temp = std::make_shared<EBBinaryOpTermNode>(_right, std::make_shared<EBNumberNode<Real> >(1.0), NodeType::SUB);
+        std::shared_ptr<EBBinaryOpTermNode>temp2 = std::make_shared<EBBinaryOpTermNode>(_left, temp, NodeType::POW);
+        derivative = std::make_shared<EBBinaryOpTermNode>(temp2, _right, MUL);
+        break;
+      }
+      case LESS:
+      case GREATER:
+      case LESSEQ:
+      case GREATEREQ:
+      case EQ:
+      case NOTEQ:
+      case AND:
+      case OR:
+      {
+        mooseError("Logical Operator not in logical statement");
+        break;
+      }
+    }
+  }
+  return derivative;
+}
+
+std::shared_ptr<ExpressionBuilder::EBTermNode>
+ExpressionBuilder::EBBinaryFuncTermNode::takeDerivative()
+{
+  if(derivative == NULL)
+  {
+    std::shared_ptr<EBTermNode> temp;
+    std::shared_ptr<EBTermNode> temp2;
+    std::shared_ptr<EBTermNode> temp3;
+    std::shared_ptr<EBTermNode> temp4;
+    std::shared_ptr<EBTermNode> temp5;
+    std::shared_ptr<EBTermNode> temp6;
+    std::shared_ptr<EBTermNode> temp7;
+    std::shared_ptr<EBTermNode> temp8;
+    switch (_type)
+    {
+      case MIN:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(_left, _right, EBBinaryOpTermNode::NodeType::LESS);
+        temp2 = std::make_shared<EBTernaryFuncTermNode>(temp, _left, _right, EBTernaryFuncTermNode::NodeType::CONDITIONAL);
+        derivative = temp2->takeDerivative();
+        break;
+      }
+      case MAX:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(_left, _right, EBBinaryOpTermNode::NodeType::GREATER);
+        temp2 = std::make_shared<EBTernaryFuncTermNode>(temp, _left, _right, EBTernaryFuncTermNode::NodeType::CONDITIONAL);
+        derivative = temp2->takeDerivative();
+        break;
+      }
+      case ATAN2:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(_left, _right, EBBinaryOpTermNode::NodeType::DIV);
+        temp2 = std::make_shared<EBUnaryFuncTermNode>(temp, EBUnaryFuncTermNode::ATAN);
+        derivative = temp2->takeDerivative();
+        break;
+      }
+      case HYPOT:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(_left, _right, EBBinaryOpTermNode::NodeType::DIV);
+        temp2 = std::make_shared<EBBinaryOpTermNode>(temp, temp, EBBinaryOpTermNode::NodeType::MUL);
+        temp3 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp2, EBBinaryOpTermNode::NodeType::ADD);
+        temp4 = std::make_shared<EBUnaryFuncTermNode>(temp3, EBUnaryFuncTermNode::NodeType::SQRT);
+        temp5 = std::make_shared<EBUnaryFuncTermNode>(_right, EBUnaryFuncTermNode::NodeType::ABS);
+        temp6 = std::make_shared<EBBinaryOpTermNode>(temp4, temp5, EBBinaryOpTermNode::NodeType::MUL);
+        derivative = temp6->takeDerivative();
+        break;
+      }
+      case PLOG:
+      {
+        temp = std::make_shared<EBBinaryOpTermNode>(_left, _right, EBBinaryOpTermNode::NodeType::SUB);
+        temp2 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp, EBBinaryOpTermNode::NodeType::ADD);
+        temp3 = std::make_shared<EBBinaryOpTermNode>(std::make_shared<EBNumberNode<Real> >(1.0), temp, EBBinaryOpTermNode::NodeType::SUB);
+        temp4 = std::make_shared<EBUnaryFuncTermNode>(temp2, EBUnaryFuncTermNode::NodeType::LOG);
+        temp5 = std::make_shared<EBUnaryFuncTermNode>(temp3, EBUnaryFuncTermNode::NodeType::LOG);
+        temp6 = std::make_shared<EBUnaryOpTermNode>(temp5, EBUnaryOpTermNode::NodeType::NEG);
+        temp7 = std::make_shared<EBBinaryOpTermNode>(temp, std::make_shared<EBNumberNode<Real> >(0.0), EBBinaryOpTermNode::NodeType::LESS);
+        temp8 = std::make_shared<EBTernaryFuncTermNode>(temp7, temp6, temp5, EBTernaryFuncTermNode::NodeType::CONDITIONAL);
+        derivative = temp8->takeDerivative();
+        break;
+      }
+    }
+  }
+  return derivative;
+}
+
+template <>
+Real
+ExpressionBuilder::EBMatPropNode<Real>::evaluate()
+{
+  return _mpd->value()[current_quad_point];
+}
+
+template <>
+Real
+ExpressionBuilder::EBMatPropNode<RealVectorValue>::evaluate()
+{
+  return _mpd->value()[current_quad_point](_comp1);
+}
+
+template <>
+Real
+ExpressionBuilder::EBMatPropNode<RankTwoTensor>::evaluate()
+{
+  return _mpd->value()[current_quad_point](_comp1, _comp2);
+}
+
+template <>
+Real
+ExpressionBuilder::EBCoupledVarNode<VariableValue>::evaluate()
+{
+  return (*_value)[current_quad_point];
+}
+
+template <>
+Real
+ExpressionBuilder::EBCoupledVarNode<VariableGradient>::evaluate()
+{
+  return ((*_value)[current_quad_point])(_comp1);
+}
+
+template <>
+Real
+ExpressionBuilder::EBCoupledVarNode<VariableSecond>::evaluate()
+{
+  return ((*_value)[current_quad_point])(_comp1, _comp2);
+}
+
+Real
+ExpressionBuilder::EBUnaryFuncTermNode::evaluate()
+{
+  if(!isEvaluated)
+  {
+    switch (_type)
+    {
+      case SIN:
+      {
+        evaluated = sin(_subnode->evaluate());
+        break;
+      }
+      case COS:
+      {
+        evaluated = cos(_subnode->evaluate());
+        break;
+      }
+      case TAN:
+      {
+        evaluated = tan(_subnode->evaluate());
+        break;
+      }
+      case ABS:
+      {
+        evaluated = abs(_subnode->evaluate());
+        break;
+      }
+      case LOG:
+      {
+        evaluated = log(_subnode->evaluate());
+        break;
+      }
+      case LOG2:
+      {
+        evaluated = log2(_subnode->evaluate());
+        break;
+      }
+      case LOG10:
+      {
+        evaluated = log10(_subnode->evaluate());
+        break;
+      }
+      case EXP:
+      {
+        evaluated = exp(_subnode->evaluate());
+        break;
+      }
+      case COSH:
+      {
+        evaluated = cosh(_subnode->evaluate());
+        break;
+      }
+      case SINH:
+      {
+        evaluated = sinh(_subnode->evaluate());
+        break;
+      }
+      case SQRT:
+      {
+        evaluated = sqrt(_subnode->evaluate());
+        break;
+      }
+      case ACOS:
+      {
+        evaluated = acos(_subnode->evaluate());
+        break;
+      }
+      case ATAN:
+      {
+        evaluated = atan(_subnode->evaluate());
+        break;
+      }
+    }
+  }
+  isEvaluated = true;
+  return evaluated;
+}
+
+Real
+ExpressionBuilder::EBBinaryOpTermNode::evaluate()
+{
+  if(!isEvaluated)
+  {
+    switch (_type)
+    {
+      case ADD:
+      {
+        evaluated = _left->evaluate() + _right->evaluate();
+        break;
+      }
+      case SUB:
+      {
+        evaluated = _left->evaluate() - _right->evaluate();
+        break;
+      }
+      case MUL:
+      {
+        evaluated = _left->evaluate() * _right->evaluate();
+        break;
+      }
+      case DIV:
+      {
+        evaluated = _left->evaluate() / _right->evaluate();
+        break;
+      }
+      case MOD:
+      {
+        evaluated = fmod(_left->evaluate(), _right->evaluate());
+        break;
+      }
+      case POW:
+      {
+        evaluated = pow(_left->evaluate(), _right->evaluate());
+        break;
+      }
+      case LESS:
+      case GREATER:
+      case LESSEQ:
+      case GREATEREQ:
+      case EQ:
+      case NOTEQ:
+      case AND:
+      case OR:
+        mooseError("Not a Real value");
+    }
+  }
+  isEvaluated = true;
+  return evaluated;
+}
+
+bool
+ExpressionBuilder::EBBinaryOpTermNode::boolEvaluate()
+{
+  if(!isBoolEvaluated)
+  {
+    switch (_type)
+    {
+      case LESS:
+      {
+        boolEvaluated = _left->evaluate() < _right->evaluate();
+        break;
+      }
+      case GREATER:
+      {
+        boolEvaluated = _left->evaluate() > _right->evaluate();
+        break;
+      }
+      case LESSEQ:
+      {
+        boolEvaluated = _left->evaluate() <= _right->evaluate();
+        break;
+      }
+      case GREATEREQ:
+      {
+        boolEvaluated = _left->evaluate() >= _right->evaluate();
+        break;
+      }
+      case EQ:
+      {
+        boolEvaluated = _left->evaluate() == _right->evaluate();
+        break;
+      }
+      case NOTEQ:
+      {
+        boolEvaluated = _left->evaluate() != _right->evaluate();
+        break;
+      }
+      case AND:
+      {
+        boolEvaluated = _left->boolEvaluate() && _right->boolEvaluate();
+        break;
+      }
+      case OR:
+      {
+        boolEvaluated = _left->boolEvaluate() || _right->boolEvaluate();
+        break;
+      }
+      case SUB:
+      case ADD:
+      case MUL:
+      case DIV:
+      case MOD:
+      case POW:
+        mooseError("Not a boolean value");
+    }
+  }
+  isBoolEvaluated = true;
+  return boolEvaluated;
+}
+
+Real
+ExpressionBuilder::EBBinaryFuncTermNode::evaluate()
+{
+  if(!isEvaluated)
+  {
+    Real left = _left->evaluate();
+    Real right = _right->evaluate();
+    switch (_type)
+    {
+      case MIN:
+      {
+        if(left < right)
+          evaluated = left;
+        else
+          evaluated = right;
+        break;
+      }
+      case MAX:
+      {
+        if(left > right)
+          evaluated = left;
+        else
+          evaluated = right;
+        break;
+      }
+      case ATAN2:
+      {
+        if(right > 0)
+          evaluated = atan(left / right);
+        else if(right < 0 && left >= 0)
+          evaluated = atan(left / right) + pi;
+        else if(right < 0 && left < 0)
+          evaluated = atan(left / right) - pi;
+        else if(right == 0 && left > 0)
+          evaluated = pi / 2;
+        else if(right == 0 && left < 0)
+          evaluated = -pi / 2;
+        else if(right == 0 && left == 0)
+          evaluated = 0;
+          //mooseError("atan2 is undefined at x = 0 and y = 0");
+        break;
+      }
+      case HYPOT:
+      {
+        evaluated = abs(left) * sqrt(1.0 + right * right/(left * left));
+        break;
+      }
+      case PLOG:
+      {
+        Real yprime = left - right;
+        if(yprime >= 0)
+          evaluated = log(1 + yprime);
+        else
+          evaluated = -log(1 - yprime);
+        break;
+      }
+    }
+  }
+  isEvaluated = true;
+  return evaluated;
 }

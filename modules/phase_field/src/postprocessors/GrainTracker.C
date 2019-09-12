@@ -1551,8 +1551,6 @@ GrainTracker::updateFieldInfo()
     std::size_t curr_var = grain._var_index;
     std::size_t map_index = (_single_map_mode || _condense_map_info) ? 0 : curr_var;
 
-    std::cout << grain << std::endl;
-
     for (auto entity : grain._local_ids)
     {
       // Highest variable value at this entity wins

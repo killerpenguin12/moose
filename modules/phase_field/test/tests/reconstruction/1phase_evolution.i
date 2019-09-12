@@ -26,6 +26,8 @@
   [./grain_tracker]
     type = GrainTracker
     polycrystal_ic_uo = ebsd
+    compute_var_to_feature_map = true
+    add_halos = true
   [../]
 []
 
@@ -94,6 +96,8 @@
   [./AnisoEnergy]
     type = EBGBAnisoEnergy
     material = CU
+    third_derivatives = false
+    outputs = exodus
   [../]
 []
 

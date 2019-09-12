@@ -16,7 +16,7 @@ template <>
 InputParameters
 validParams<EBGBAnisoEnergy>()
 {
-  InputParameters params = validParams<DerivativeParsedMaterialHelper<> >();
+  InputParameters params = validParams<ExpressionBuilderMaterial<> >();
   params.addClassDescription("Calculate value of grain boundaries in a polycrystalline sample");
   params.addParam<int>("s",20,"Sharpness of Grain Boundary edge");
   params.addParam<int>("t",20,"Thickness of Grain Boundary");
@@ -31,7 +31,7 @@ validParams<EBGBAnisoEnergy>()
 }
 
 EBGBAnisoEnergy::EBGBAnisoEnergy(const InputParameters & parameters)
-  : DerivativeParsedMaterialHelper<>(parameters),
+  : ExpressionBuilderMaterial<>(parameters),
     _op_num(coupledComponents("v")),
     _thickness(getParam<int>("t")),
     _sharpness(getParam<int>("s")),
@@ -51,7 +51,7 @@ EBGBAnisoEnergy::EBGBAnisoEnergy(const InputParameters & parameters)
     _symmetry_variants(24),
     _epsilon(1e-6),
     _orientation_matrix(_op_num),
-    _par_vec(42),
+    _par_vec(43),
     _op_to_grain_name(getParam<MaterialPropertyName>("op_to_grain_name")),
     _material(getParam<MooseEnum>("material").getEnum<Material>())
 {
@@ -61,19 +61,19 @@ EBGBAnisoEnergy::EBGBAnisoEnergy(const InputParameters & parameters)
   setAxes110();
   setAxes111();
 
-  EBVectorFunction axis100(1, 0, 0);
+  EBVector axis100(1, 0, 0);
 
-  EBTerm::EBTermVector _vals = EBTerm::CreateEBTermVector("v",_op_num);
-  EBVectorFunction::EBVectorVector _grad_vals = EBVectorFunction::CreateEBVectorVector("v", _op_num);
+  std::vector<EBTerm> _vals = setCoupledVarVector("v",_op_num);
+  std::vector<EBVector> _grad_vals = setCoupledGradVector("v", _op_num);
 
   for(unsigned int i = 0; i < _op_num; ++i)
   {
     _orientation_matrix[i] = setEBMaterialPropertyRankTwoTensor(_op_to_grain_name + std::to_string(i));
   }
 
-  EBVectorFunction gbdir;
+  EBVector gbdir;
   EBTerm grad_norm;
-  EBMatrixFunction rotation_matrix(3,3);
+  EBMatrix rotation_matrix(3,3);
   EBTerm GBen;
   EBTerm _GB_location;
   EBTerm _GB_energy(0);
@@ -81,10 +81,10 @@ EBGBAnisoEnergy::EBGBAnisoEnergy(const InputParameters & parameters)
   for(unsigned int i = 0; i < _op_num; ++i)
   {
     EBTerm grad_norm = (_grad_vals)[i].norm();
-    EBVectorFunction gbdir = (_grad_vals)[i] / grad_norm;
+    EBVector gbdir = (_grad_vals)[i] / grad_norm;
 
-    rotation_matrix = ExpressionBuilder::EBMatrixFunction::rotVec1ToVec2(gbdir, axis100);
-    std::cout << rotation_matrix.rowNum() << rotation_matrix.colNum() << std::endl;
+    rotation_matrix = ExpressionBuilder::EBMatrix::rotVec1ToVec2(gbdir, axis100);
+
     for(unsigned int j = i + 1; j < _op_num; ++j)
     {
       GBen = conditional((_orientation_matrix[i])[0][0] <= 1 && (_orientation_matrix[j])[0][0] <= 1,
@@ -98,8 +98,12 @@ EBGBAnisoEnergy::EBGBAnisoEnergy(const InputParameters & parameters)
       _GB_energy = _GB_energy + GBen * _GB_location;
     }
   }
-
-  functionParse(_GB_energy);
+  GBen = conditional((_orientation_matrix[0])[0][0] <= 1 && (_orientation_matrix[1])[0][0] <= 1,
+                     gB5DOF(rotation_matrix * _orientation_matrix[0],
+                            rotation_matrix * _orientation_matrix[1]),
+                     0);
+  declareEBMaterial(GBen);
+  //functionParse(_GB_energy);
 }
 
 void
@@ -219,7 +223,7 @@ EBGBAnisoEnergy::setAxes111()
 }
 
 ExpressionBuilder::EBTerm
-EBGBAnisoEnergy::gB5DOF(EBMatrixFunction P, EBMatrixFunction S)
+EBGBAnisoEnergy::gB5DOF(EBMatrix P, EBMatrix S)
 {
   distancesToSet(P, S, _geom100, _axes100, _dirs100);
   distancesToSet(P, S, _geom110, _axes110, _dirs110);
@@ -229,10 +233,10 @@ EBGBAnisoEnergy::gB5DOF(EBMatrixFunction P, EBMatrixFunction S)
 }
 
 void
-EBGBAnisoEnergy::distancesToSet(const EBMatrixFunction & P, EBMatrixFunction & S,
+EBGBAnisoEnergy::distancesToSet(EBMatrix & P, EBMatrix & S,
                                 std::vector<std::vector<EBTerm> > & geom,
-                                const std::vector<EBVectorFunction> & axes,
-                                const std::vector<EBVectorFunction> & dirs)
+                                const std::vector<EBVector> & axes,
+                                const std::vector<EBVector> & dirs)
 {
   unsigned int naxes = axes.size();
 
@@ -244,17 +248,14 @@ EBGBAnisoEnergy::distancesToSet(const EBMatrixFunction & P, EBMatrixFunction & S
 
   for (unsigned int i = 1; i < 4; ++i) // Rotate three times around X by +90 degrees
   {
-    std::cout << "working" << std::endl;
     _symmetry_variants[i] = _symmetry_variants[i-1] * _rot_X_p90;
   }
   for (unsigned int i = 4; i < 16; ++i) // Rotate three times around Y by +90 degrees
   {
-    std::cout << "working" << std::endl;
     _symmetry_variants[i] = _symmetry_variants[i - 4] * _rot_Y_p90;
   }
   for (unsigned int i = 16; i < 20; ++i) // Rotate around Z by +90 degrees
   {
-    std::cout << "working" << std::endl;
     _symmetry_variants[i] = _symmetry_variants[i - 16] * _rot_Z_p90;
   }
   for (unsigned int i = 20; i < 24; ++i) // Rotate around Z by -90 degrees
@@ -277,62 +278,68 @@ EBGBAnisoEnergy::distancesToSet(const EBMatrixFunction & P, EBMatrixFunction & S
   {
     // Completing the orthonormal coordinate set.
     // theta1 and theta2 are defined in the plane spanned by (dir,dir2)
-    EBVectorFunction dir2 = ExpressionBuilder::EBVectorFunction::cross(axes[i],dirs[i]);
+    EBVector dir2 = ExpressionBuilder::EBVector::cross(axes[i],dirs[i]);
 
-    EBMatrixFunction R;
+    EBMatrix R;
 
     // for each symmetry-related variant of the second grain
     for (unsigned int j = 0; j < 24; ++j)
     {
       R = _symmetry_variants[j].transpose() * P;
-      std::cout << _symmetry_variants[j].rowNum() << _symmetry_variants[j].colNum() << std::endl;
-      std::cout << P.rowNum() << P.colNum() << std::endl;
+
       // This rotates any vector in cube P into a vector in cube S
       // Calculation from here on out is much easier with quaternions.
-      EBQuaternionFunction q(R);
+      EBQuaternion q(R);
 
-      const EBTerm lq = sqrt(q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-      EBVectorFunction axi(q[1] / lq, q[2] / lq, q[3] / lq);
+      EBTerm lq = sqrt(q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+      EBVector axi(q[1] / lq, q[2] / lq, q[3] / lq);
+
+      lq.simplify();
 
       // Rotation angle
       EBTerm psi = 2.0 * acos(q[0]);
       EBTerm dot_p = axi * axes[i];
 
+      psi.simplify();
+      dot_p.simplify();
+
       // Compute rotational distance from boundary P/S to the rotation set i.
       // This formula produces 2*sin(delta/2), where delta is the angle of closest approach.
-      const EBTerm dis = 2 * sqrt(abs(1 - dot_p * dot_p)) * sin(psi / 2.0);
+      EBTerm dis = 2 * sqrt(abs(1 - dot_p * dot_p)) * sin(psi / 2.0);
+      dis.simplify();
 
       // angle of rotation about ax that most closely approximates R
       EBTerm theta = 2 * atan(dot_p * tan(psi / 2.0));
+      theta.simplify();
 
       // compute the normal of the best-fitting GB in grain 1
-      EBVectorFunction n1 = P[0];
-      EBVectorFunction n2 = (_symmetry_variants[j])[0];
+      EBVector n1 = P[0];
+      EBVector n2 = (_symmetry_variants[j])[0];
 
       std::vector<EBTerm> tempVector;
       tempVector.push_back(EBTerm(cos(theta / 2.0)));
       tempVector.push_back(sin(theta / 2.0) * (axes[i])[0]);
       tempVector.push_back(sin(theta / 2.0) * (axes[i])[1]);
       tempVector.push_back(sin(theta / 2.0) * (axes[i])[2]);
-      EBQuaternionFunction q2(tempVector);
+      EBQuaternion q2(tempVector);
 
       // Rotation matrix that most closely approximates R
-      EBMatrixFunction RA(q2);
+      EBMatrix RA(q2);
 
       // from this point on we're dealing with the idealized rotation RA, not the original R
-      EBVectorFunction m1 = n1 + RA.transpose() * n2;
+      EBVector m1 = n1 + RA.transpose() * n2;
 
-      const EBTerm l = m1.norm();
+      EBTerm l = m1.norm();
 
       // halfway between the two normal vectors from the two grains
       m1 = m1 / l;
 
       // same representation in the other grain
-      EBVectorFunction m2 = RA * m1;
+      EBVector m2 = RA * m1;
 
       // compute the inclination angle for the common rotation axis and avoid NaN's if m1 and
       // axes[i] are exactly parallel
-      const EBTerm m1_dot_axes = abs(m1 * axes[i]);
+      EBTerm m1_dot_axes = abs(m1 * axes[i]);
       EBTerm phi = conditional(m1_dot_axes > 1.0, 0.0, acos(m1_dot_axes));
 
       EBTerm theta1;
@@ -367,6 +374,9 @@ EBGBAnisoEnergy::distancesToSet(const EBMatrixFunction & P, EBMatrixFunction & S
       EBTerm ksi = abs(theta2 - theta1);
       EBTerm eta = abs(theta2 + theta1);
 
+      ksi.simplify();
+      eta.simplify();
+
       // round everything to 1e-6, so that negligible numerical differences are dropped
       geom[0][thisindex] = _epsilon * (dis / _epsilon);
       geom[1][thisindex] = _epsilon * (ksi / _epsilon);
@@ -391,12 +401,12 @@ EBGBAnisoEnergy::trimGeom(std::vector<std::vector<EBTerm>> & geom)
   // weighing functions in weightedMeanEnergy()
   for (unsigned int i = 0; i < (geom_size - 1); ++i)
     for (unsigned int j = i + 1; j < geom_size; ++j)
-      geom[5][j] = conditional(geom[0][i] == geom[0][j] && geom[1][i] == geom[1][j] && geom[2][i] == geom[2][j] &&
+      geom[4][j] = conditional(geom[0][i] == geom[0][j] && geom[1][i] == geom[1][j] && geom[2][i] == geom[2][j] &&
           geom[3][i] == geom[3][j],0,1);
 
   // remove excess zeroes
   for (unsigned int i = 0; i < geom_size; ++i)
-    geom[5][i] = conditional(geom[0][i] == 0 && geom[1][i] == 0 && geom[2][i] == 0 && geom[3][i] == 0,0,1);
+    geom[4][i] = conditional(geom[0][i] == 0 && geom[1][i] == 0 && geom[2][i] == 0 && geom[3][i] == 0,0,geom[4][i]);
 }
 
 ExpressionBuilder::EBTerm
@@ -776,7 +786,7 @@ EBGBAnisoEnergy::rSW(EBTerm theta, Real thetaMin, Real thetaMax, Real a)
   const Real dtheta = thetaMax - thetaMin;
 
   // Normalized angle
-  const EBTerm sintheta = sin((theta - thetaMin) * libMesh::pi / (dtheta * 2));
+  EBTerm sintheta = sin((theta - thetaMin) * libMesh::pi / (dtheta * 2));
 
   // Cut off a small sins to avoid 0 * infinity problem.
   // The proper limit is 0.

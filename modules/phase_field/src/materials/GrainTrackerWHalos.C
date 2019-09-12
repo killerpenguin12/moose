@@ -36,7 +36,6 @@ GrainTrackerWHalos::GrainTrackerWHalos(const InputParameters & parameters)
     _euler(getUserObject<EulerAngleProvider>("euler_angle_provider")),
     _F_name(getParam<MaterialPropertyName>("f_name"))
 {
-  _grain_num = _grain_tracker.getNumberActiveGrains();
   for(unsigned int i = 0; i < _op_num; ++i)
   {
     _qp_orientation_matrix.push_back(&declareProperty<RankTwoTensor>(_F_name + std::to_string(i)));
@@ -46,6 +45,8 @@ GrainTrackerWHalos::GrainTrackerWHalos(const InputParameters & parameters)
 void
 GrainTrackerWHalos::computeQpProperties()
 {
+  _grain_num = _grain_tracker.getNumberActiveGrains();
+  _orientation_matrix.resize(_grain_num);
   for (unsigned int grain = 0; grain < _grain_num; ++grain)
     _orientation_matrix[grain] = RotationTensor(_euler.getEulerAngles(grain));
 

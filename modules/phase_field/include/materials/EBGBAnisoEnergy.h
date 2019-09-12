@@ -9,8 +9,7 @@
 
 #pragma once
 
-#include "DerivativeParsedMaterialHelper.h"
-#include "ExpressionBuilder.h"
+#include "ExpressionBuilderMaterial.h"
 #include "EulerAngleProvider.h"
 
 // Forward Declarations
@@ -22,8 +21,7 @@ InputParameters validParams<EBGBAnisoEnergy>();
 /**
  * Grain boundary energy parameters for isotropic uniform grain boundary energies
  */
-class EBGBAnisoEnergy : public DerivativeParsedMaterialHelper<>,
-		     public ExpressionBuilder
+class EBGBAnisoEnergy : public ExpressionBuilderMaterial<>
 {
 public:
   EBGBAnisoEnergy(const InputParameters & parameters);
@@ -39,12 +37,12 @@ protected:
   std::vector<std::vector<EBTerm> > _geom111;
   //@}
 
-  std::vector<EBVectorFunction> _axes100; // all of the <100> axes
-  std::vector<EBVectorFunction> _dirs100; // orthogonal to the <100> axes
-  std::vector<EBVectorFunction> _axes110;
-  std::vector<EBVectorFunction> _dirs110;
-  std::vector<EBVectorFunction> _axes111;
-  std::vector<EBVectorFunction> _dirs111;
+  std::vector<EBVector> _axes100; // all of the <100> axes
+  std::vector<EBVector> _dirs100; // orthogonal to the <100> axes
+  std::vector<EBVector> _axes110;
+  std::vector<EBVector> _dirs110;
+  std::vector<EBVector> _axes111;
+  std::vector<EBVector> _dirs111;
 
   ///{@ 90 degree rotaions around the coordinate axes
   const RotationTensor _rot_X_p90;
@@ -53,11 +51,11 @@ protected:
   const RotationTensor _rot_Z_n90;
   ///@}
 
-  std::vector<EBMatrixFunction> _symmetry_variants;
+  std::vector<EBMatrix> _symmetry_variants;
 
 	const Real _epsilon;
 
-	std::vector<EBMatrixFunction> _orientation_matrix;
+	std::vector<EBMatrix> _orientation_matrix;
 
 	std::vector<EBTerm> _e100, _e110, _e111;
   std::vector<EBTerm> _s100, _s110, _s111;
@@ -82,12 +80,12 @@ protected:
 	void setAxes110();
 	void setAxes111();
 
-  EBTerm gB5DOF(EBMatrixFunction P, EBMatrixFunction S);
+  EBTerm gB5DOF(EBMatrix P, EBMatrix S);
 
-	void distancesToSet(const EBMatrixFunction & P, EBMatrixFunction & S,
+	void distancesToSet(EBMatrix & P, EBMatrix & S,
 											std::vector<std::vector<EBTerm> > & geom,
-										  const std::vector<EBVectorFunction> & axes,
-										  const std::vector<EBVectorFunction> & dirs);
+										  const std::vector<EBVector> & axes,
+										  const std::vector<EBVector> & dirs);
 
 	void trimGeom(std::vector<std::vector<EBTerm>> & geom);
 
