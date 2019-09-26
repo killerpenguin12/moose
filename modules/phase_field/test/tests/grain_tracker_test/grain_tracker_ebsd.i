@@ -23,8 +23,9 @@
     threshold = 0.2
     connecting_threshold = 0.08
     flood_entity_type = ELEMENTAL
-    compute_halo_maps = true # For displaying HALO fields
     polycrystal_ic_uo = ebsd
+    compute_var_to_feature_map = true
+    add_halos = true
     execute_on = 'initial timestep_end'
   [../]
 []
@@ -160,6 +161,17 @@
     Q = 0.23
     GBenergy = 0.708
     molar_volume = 7.11e-6
+  [../]
+  [./opToGrain]
+    type = GrainTrackerWHalos
+    euler_angle_provider = ebsd_reader
+    grain_tracker_name = grain_tracker
+  [../]
+  [./AnisoEnergy]
+    type = EBGBAnisoEnergy
+    material = CU
+    third_derivatives = false
+    outputs = exodus
   [../]
 []
 
