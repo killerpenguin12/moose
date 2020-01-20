@@ -474,3 +474,207 @@ ExpressionBuilder::EBLogPlogSubstitution::substitute(const EBUnaryFuncTermNode &
   else
     return NULL;
 }
+
+template <typename U>
+void
+ExpressionBuilder::EBTensor::initialize(std::initializer_list<U> u, std::size_t _depth)
+{
+  // outer recursions
+  checkDimensions(u.size(), _depth);
+  for (auto t : u)
+    initialize(t, _depth + 1);
+}
+
+void
+ExpressionBuilder::EBTensor::initialize(std::initializer_list<int> t, std::size_t _depth)
+{
+  // innermost recursion
+  checkDimensions(t.size(), _depth);
+  for (const int & v : t)
+    _data.push_back(EBTerm(v));
+}
+
+void
+ExpressionBuilder::EBTensor::initialize(std::initializer_list<Real> t, std::size_t _depth)
+{
+  // innermost recursion
+  checkDimensions(t.size(), _depth);
+  for (const Real & v : t)
+    _data.push_back(EBTerm(v));
+}
+
+void
+ExpressionBuilder::EBTensor::initialize(std::initializer_list<std::string> t, std::size_t _depth)
+{
+  // innermost recursion
+  checkDimensions(t.size(), _depth);
+  for (const std::string & v : t)
+    _data.push_back(EBTerm(v.c_str()));
+}
+
+void
+ExpressionBuilder::EBTensor::checkDimensions(std::size_t size, std::size_t _depth)
+{
+  // check size
+  if (_shape.size() <= _depth)
+  {
+    _access_data.resize(_depth + 1);
+    unsigned int index_weight = 1;
+    if(_access_data.size() == 1)
+      index_weight = 0;
+    else
+      for(unsigned int i = 0; i < _shape.size(); ++i)
+        index_weight *= _shape[i];
+    _access_data[_depth] = index_weight;
+    _shape.resize(_depth + 1);
+    _shape[_depth] = size;
+  }
+  else
+  {
+    if (_shape[_depth] != size)
+      throw std::runtime_error("Inconsistent initializer list size");
+  }
+}
+
+void
+ExpressionBuilder::EBTensor::printDebug()
+{
+  std::cout << "shape:";
+  for (auto s : _shape)
+    std::cout << ' ' << s;
+  std::cout << '\n';
+
+  std::cout << "data: ";
+  for (auto d : _data)
+    std::cout << ' ' << d;
+  std::cout << '\n';
+}
+
+// operators
+
+ExpressionBuilder::EBTerm
+ExpressionBuilder::EBTensor::operator()(unsigned int index, unsigned int index_rest...)
+{
+    return (*this)(std::vector<unsigned int>(1,index), index_rest);
+}
+
+
+ExpressionBuilder::EBTerm
+ExpressionBuilder::EBTensor::operator()(std::vector<unsigned int> index_caught, unsigned int index, unsigned int index_rest...)
+{
+  index_caught.push_back(index);
+  return (*this)(index_caught, index_rest);
+}
+
+
+ExpressionBuilder::EBTerm
+ExpressionBuilder::EBTensor::operator()(std::vector<unsigned int> index_caught, unsigned int index)
+{
+  index_caught.push_back(index);
+  unsigned int location = 0;
+  for(unsigned int i = 0; i < _access_data.size(); ++i)
+    location += _access_data[i] * index_caught[i];
+  return _data[location];
+}
+
+ExpressionBuilder::EBTensor &
+ExpressionBuilder::EBTensor::operator+(const EBTensor & rhs)
+{
+  if(this->_shape != rhs._shape)
+    mooseError("Improper shape for addition.");
+  EBTensor * result = new EBTensor();
+  std::vector<EBTerm> new_data(this->_data.size());
+  for(unsigned int i = 0; i < this->_data.size(); ++i)
+    new_data[i] = this->_data[i] + rhs._data[i];
+  result->_data = new_data;
+  result->_shape = this->_shape;
+  result->_access_data = this->_access_data;
+  return *result;
+}
+
+ExpressionBuilder::EBTensor &
+ExpressionBuilder::EBTensor::operator-(const EBTensor & rhs)
+{
+  if(this->_shape != rhs._shape)
+    mooseError("Improper shape for addition.");
+  EBTensor * result = new EBTensor();
+  std::vector<EBTerm> new_data(this->_data.size());
+  for(unsigned int i = 0; i < this->_data.size(); ++i)
+    new_data[i] = this->_data[i] - rhs._data[i];
+  result->_data = new_data;
+  result->_shape = this->_shape;
+  result->_access_data = this->_access_data;
+  return *result;
+}
+
+ExpressionBuilder::EBTensor &
+ExpressionBuilder::EBTensor::operator*(const EBTensor & rhs)
+{
+  if(this->_shape.back() != rhs._shape[0])
+    mooseError("Improper shape for multiplication.")
+  EBTensor * result = new EBTensor();
+  result->_shape = std::vector<unsigned int>(this->_shape.begin(), this->_shape.end() - 1);
+  result->_shape.insert(result->_shape.end(), rhs._shape.begin() + 1, rhs._shape.end());
+  unsigned int data_size = 1;
+  for(unsigned int i = 0; i < result->_shape[i]; ++i)
+    data_size *= result->_shape[i];
+
+  std::vector<EBTerm> new_data(data_size, EBTerm(0.0));
+  unsigned int divider = 1;
+  for(unsigned int i = 1; i < rhs._shape; ++i)
+    divider *= rhs._shape[i];
+  for(unsigned int i = 0; i < data_size; ++i)
+    for(unsigned int j = 0; j < rhs._shape[0]; ++j)
+      new_data[i] += this->_data[i/divider*rhs._shape[0]+j] * rhs->_data[i%divider+divider*j];
+  result->_data = new_data;
+  return *result;
+}
+
+ExpressionBuilder::EBTensor &
+ExpressionBuilder::EBTensor::contractMult(const EBTensor & lhs, const EBTensor & rhs, unsigned int contractor)
+{
+  for(unsigned int i = 0; i < contractor; ++i)
+    if(this->_shape[this->_shape.size() - 1 - i] != rhs._shape[i])
+      mooseError("Improper shape for multiplication.")
+  EBTensor * result = new EBTensor();
+  result->_shape = std::vector<unsigned int>(this->_shape.begin(), this->_shape.end() - contractor);
+  result->_shape.insert(result->_shape.end(), rhs._shape.begin() + contractor, rhs._shape.end());
+  unsigned int data_size = 1;
+  for(unsigned int i = 0; i < result->_shape[i]; ++i)
+    data_size *= result->_shape[i];
+
+  std::vector<EBTerm> new_data(data_size, EBTerm(0.0));
+  unsigned int divider = 1;
+  for(unsigned int i = contractor; i < rhs._shape; ++i)
+    divider *= rhs._shape[i];
+  std::vector<unsigned int> center = this->_shape.end() - contractor, this->_shape.end());
+  for(unsigned int i = 0; i < data_size; ++i)
+    new_data[i] = recurseMult(EBTerm(0.0), index, divider, center, 0, std::vector<unsigned int>(center.size(),0), lhs, rhs);
+  result->_data = new_data;
+  return *result;
+}
+
+ExpressionBuilder::EBTerm &
+ExpressionBuilder::EBTensor::recurseMult(EBTerm & result_term, unsigned int index, unsigned int divider, std::vector<unsigned int> center, unsigned int current, std::vector<unsigned int> current_vec, const EBTensor & lhs, const EBTensor & rhs)
+{
+  if(current < center.size())
+    for(unsigned int i = 0; i < center[current])
+    {
+      current_vec[current] = i;
+      recurseMult(divider, center, current + 1, current_vec, lhs, rhs);
+    }
+  else
+  {
+    unsigned int lhs_index = 0;
+    unsigned int multiplier = 1;
+    unsigned int rhs_index = index % divider;
+    for(unsigned int i = 1; i <= center.size(); ++i)
+    {
+      lhs_index += multiplier * current_vec[center.size() - i];
+      rhs_index += multiplier * current_vec[center.size() - i] * divider;
+      multiplier *= center[center.size() - 1];
+    }
+    lhs_index += multiplier * index / divider;
+    return result_term + lhs._data[lhs_index] * rhs._data[rhs_index]
+  }
+}
