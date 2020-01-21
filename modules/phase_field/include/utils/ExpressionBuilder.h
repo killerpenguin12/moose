@@ -325,6 +325,7 @@ public:
   public:
     EBTermSubstitution(const EBTerm & find, const EBTerm & replace);
     virtual ~EBTermSubstitution() { delete _replace; }
+
   protected:
     virtual EBTermNode * substitute(const EBSymbolNode &) const;
     std::string _find;
@@ -343,6 +344,7 @@ public:
       mooseAssert(_epsilon != NULL, "Epsilon must not be an empty term in EBLogPlogSubstitution");
     }
     virtual ~EBLogPlogSubstitution() { delete _epsilon; }
+
   protected:
     virtual EBTermNode * substitute(const EBUnaryFuncTermNode &) const;
     EBTermNode * _epsilon;
@@ -497,7 +499,7 @@ public:
     BINARYCOMP_OP_IMPLEMENT(%=, MOD)
 
     /**
-    * @{
+     * @{
      * Binary functions
      */
     friend EBTerm min(const EBTerm &, const EBTerm &);
@@ -630,83 +632,94 @@ public:
 
   // nested initializer list
 
-template <typename T, std::size_t depth>
-struct NestedInitializerListTempl
-{
-  using type = std::initializer_list<typename NestedInitializerListTempl<T, depth - 1>::type>;
-};
+  template <typename T, std::size_t depth>
+  struct NestedInitializerListTempl
+  {
+    using type = std::initializer_list<typename NestedInitializerListTempl<T, depth - 1>::type>;
+  };
 
-template <typename T>
-struct NestedInitializerListTempl<T, 0>
-{
-  using type = T;
-};
+  template <typename T>
+  struct NestedInitializerListTempl<T, 0>
+  {
+    using type = T;
+  };
 
-template <typename T, std::size_t depth>
-using NestedInitializerList = typename NestedInitializerListTempl<T, depth>::type;
+  template <typename T, std::size_t depth>
+  using NestedInitializerList = typename NestedInitializerListTempl<T, depth>::type;
 
-// tensor class
+  // tensor class
 
-class EBTensor
-{
-public:
-  /// zero scalar
-  EBTensor() : _data(1, EBTerm(0.0)), _shape(1, 1) {}
+  class EBTensor
+  {
+  public:
+    /// zero scalar
+    EBTensor() : _data(1, EBTerm(0.0)), _shape(1, 1) {}
 
-  /// scalar with value t
-  EBTensor(int t);
-  EBTensor(Real t);
-  EBTensor(std::string t);
+    /// scalar with value t
+    EBTensor(int t);
+    EBTensor(Real t);
+    EBTensor(std::string t);
 
-  /// up to order four tensors, convenience constructors
-  EBTensor(NestedInitializerList<int, 1> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<int, 2> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<int, 3> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<int, 4> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<Real, 1> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<Real, 2> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<Real, 3> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<Real, 4> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<std::string, 1> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<std::string, 2> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<std::string, 3> t) : _i(0) { initialize(t, 0); }
-  EBTensor(NestedInitializerList<std::string, 4> t) : _i(0) { initialize(t, 0); }
+    /// up to order four tensors, convenience constructors
+    EBTensor(NestedInitializerList<int, 1> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<int, 2> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<int, 3> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<int, 4> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<Real, 1> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<Real, 2> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<Real, 3> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<Real, 4> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<std::string, 1> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<std::string, 2> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<std::string, 3> t) : _i(0) { initialize(t, 0); }
+    EBTensor(NestedInitializerList<std::string, 4> t) : _i(0) { initialize(t, 0); }
 
-  // this sadly does not work:
-  // template <int D> Tensor(NestedInitializerList<T, D> t) {}
+    // this sadly does not work:
+    // template <int D> Tensor(NestedInitializerList<T, D> t) {}
 
-  // operators
-  EBTerm operator()(unsigned int index, unsigned int index_rest...);
-  EBTerm operator()(std::vector<unsigned int> index_caught, unsigned int index, unsigned int index_rest...);
-  EBTerm operator()(std::vector<unsigned int> index_caught, unsigned int index);
+    // operators
+    EBTerm operator()(unsigned int index, unsigned int index_rest...);
+    EBTerm operator()(std::vector<unsigned int> index_caught,
+                      unsigned int index,
+                      unsigned int index_rest...);
+    EBTerm operator()(std::vector<unsigned int> index_caught, unsigned int index);
 
-  EBTensor & operator+(const EBTensor & rhs);
-  EBTensor & operator-(const EBTensor & rhs);
-  EBTensor & operator*(const EBTensor & rhs);
+    EBTensor & operator+(const EBTensor & rhs);
+    EBTensor & operator-(const EBTensor & rhs);
+    EBTensor & operator*(const EBTensor & rhs);
+    EBTensor & contractMult(const EBTensor & lhs, const EBTensor & rhs, unsigned int contractor);
+    EBTerm & recurseMult(EBTerm & result_term,
+                         unsigned int index,
+                         unsigned int divider,
+                         std::vector<long unsigned int> center,
+                         unsigned int current,
+                         std::vector<unsigned int> current_vec,
+                         const EBTensor & lhs,
+                         const EBTensor & rhs);
 
-  /// works for order 1 and 2 only
-  EBTensor transpose();
+    /// works for order 1 and 2 only
+    EBTensor transpose();
 
-  // print data for debug purposes
-  void printDebug();
+    // print data for debug purposes
+    void printDebug();
 
-protected:
-  std::vector<EBTerm> _data;
-  std::vector<std::size_t> _shape;
-  std::vector<unsigned int> _access_data;
+  protected:
+    std::vector<EBTerm> _data;
+    std::vector<std::size_t> _shape;
+    std::vector<unsigned int> _access_data;
 
-private:
-  // initializer list processing
-  template <typename U>
-  void initialize(std::initializer_list<U> u, std::size_t _depth);
-  void initialize(std::initializer_list<int> t, std::size_t _depth);
-  void initialize(std::initializer_list<Real> t, std::size_t _depth);
-  void initialize(std::initializer_list<std::string> t, std::size_t _depth);
-  void checkDimensions(std::size_t size, std::size_t _depth);
+  private:
+    // initializer list processing
+    template <typename U>
+    void initialize(std::initializer_list<U> u, std::size_t _depth);
+    void initialize(std::initializer_list<int> t, std::size_t _depth);
+    void initialize(std::initializer_list<Real> t, std::size_t _depth);
+    void initialize(std::initializer_list<std::string> t, std::size_t _depth);
+    void checkDimensions(std::size_t size, std::size_t _depth);
 
-  // helper index
-  std::size_t _i;
-};
+    // helper index
+    std::size_t _i;
+  };
 
 /*
  * Binary operators
