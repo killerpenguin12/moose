@@ -16,6 +16,7 @@
 
 #include "MooseError.h"
 #include "libmesh/libmesh_common.h"
+#include "TensorTempl.h"
 
 using namespace libMesh;
 
@@ -54,10 +55,10 @@ public:
   class EBTermNode;
   class EBFunction;
   class EBSubstitutionRule;
-  class EBTensor;
   typedef std::vector<EBTerm> EBTermList;
   typedef std::vector<EBTermNode *> EBTermNodeList;
   typedef std::vector<const EBSubstitutionRule *> EBSubstitutionRuleList;
+  typedef TensorTempl<EBTerm> EBTensor;
 
   /// Base class for nodes in the expression tree
   class EBTermNode

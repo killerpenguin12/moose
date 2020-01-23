@@ -9,14 +9,21 @@
 
 #include "gtest/gtest.h"
 
-#include "TensorTempl.h"
+#include "ExpressionBuilder.h"
 
-class ExpressionBuilderMatrixTest : public ::testing::Test, public TensorTempl<int>
+class ExpressionBuilderMatrixTest : public ::testing::Test, public ExpressionBuilder
 {
 };
 
 TEST_F(ExpressionBuilderMatrixTest, test)
 {
-  TensorTempl<int> test({{1,2,3},{4,5,6}});
+  EBTensor test({{1,2,3},{4,5,6},{7,8,9}});
+  std::cout << test;
+  std::cout << test + test;
+  std::cout << test - test;
+  std::cout << test*test;
+  std::cout << test*2;
+  std::cout << 2*test;
+  test.transpose();
   std::cout << test;
 }
