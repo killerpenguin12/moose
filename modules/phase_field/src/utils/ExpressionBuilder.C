@@ -140,6 +140,15 @@ ExpressionBuilder::EBBinaryOpTermNode::precedence() const
   mooseError("Unknown type.");
 }
 
+void
+ExpressionBuilder::EBBinaryOpTermNode::polyCanonical(std::vector<EBTermNode *> children, EBtermNode * parent)
+{
+  if(parent == NULL)
+  {
+    if
+  }
+}
+
 std::string
 ExpressionBuilder::EBTernaryFuncTermNode::stringify() const
 {
@@ -148,6 +157,42 @@ ExpressionBuilder::EBTernaryFuncTermNode::stringify() const
   s << name[_type] << '(' << *_left << ',' << *_middle << ',' << *_right << ')';
   return s.str();
 }
+
+std::string
+ExpressionBuilder::EBNNaryOpTermNode::stringify() const
+{
+  const char * name[] = {"*", "+"};
+  std::ostringstream s;
+
+  for(unsigned int i = 0; i < _children.size(); ++i)
+  {
+    if (_children[i]->precedence() > precedence())
+    s << '(' << *_children[i] << ')';
+  else
+    s << *_children[i];
+    s << name[_type];
+  }
+
+  std::string result = s.str();
+  result.pop();
+
+  return result;
+}
+
+int
+ExpressionBuilder::EBNNaryOpTermNode::precedence() const
+{
+  switch (_type)
+  {
+    case ADD:
+      return 6;
+    case MUL:
+      return 5;
+  }
+
+  mooseError("Unknown type.");
+}
+
 
 ExpressionBuilder::EBFunction &
 ExpressionBuilder::EBFunction::operator()(const ExpressionBuilder::EBTerm & arg)

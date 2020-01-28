@@ -138,7 +138,7 @@ TensorTempl<T>::operator()(std::vector<unsigned int> index_caught, unsigned int 
   unsigned int location = 0;
   for (unsigned int i = 0; i < _access_data.size(); ++i)
   {
-    if(index_caught[i] >= _data[i])
+    if(index_caught[i] >= _shape[i])
       mooseError("Incorrect indices for accessing tensor.");
     location += _access_data[i] * index_caught[i];
   }
