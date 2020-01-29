@@ -34,7 +34,7 @@ TEST_F(ExpressionBuilderMatrixTest, test)
   std::cout << test2*test2;
   std::cout << test2*2;
   std::cout << 2*test2;
-  std::cout << test2(0,1,0);
+  std::cout << test
   test2.transpose();
   std::cout << test2;
   std::cout << test2(0,1,0);

@@ -75,7 +75,7 @@ public:
       return os << node.stringify();
     }
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & children, EBTermNode * parent = NULL) = 0;
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode * parent = NULL) = 0;
   };
 
   /// Template class for leaf nodes holding numbers in the expression tree
@@ -91,7 +91,10 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const { return 0; }
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) { sim_ops.children(this); };
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+      children.push_back(this);
+      return this;
+    };
   };
 
   /// Template class for leaf nodes holding symbols (i.e. variables) in the expression tree
@@ -106,7 +109,10 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const { return 0; }
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) { children.push_back(this); };
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+      children.push_back(this);
+      return this;
+    };
   };
 
   /**
@@ -124,7 +130,11 @@ public:
     virtual std::string stringify() const; // returns "[idnumber]"
     virtual int precedence() const { return 0; }
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) { childern.push_back(this); };
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *)
+    {
+      childern.push_back(this);
+      return this;
+    };
   };
 
   /// Base class for nodes with a single sub node (i.e. functions or operators taking one argument)
@@ -137,9 +147,10 @@ public:
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
     const EBTermNode * getSubnode() const { return _subnode; }
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & sim_ops. EBTermNode *) {
-      sim_ops.push_back(this);
-      _subnode->polyCanonical(std::vector<EBTermNode *>(0));
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+      children.push_back(this);
+      _subnode = _subnode->polyCanonical(std::vector<EBTermNode *>(0));
+      return this;
     };
 
   protected:
@@ -244,7 +255,7 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const;
 
-    virtual void polyCanonical(std::vector<EBTermNode *> children, EBTermNode * parent);
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> children, EBTermNode * parent);
 
   protected:
     NodeType _type;
@@ -273,10 +284,11 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const { return 2; }
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & sim_ops. EBTermNode *) {
-      sim_ops.push_back(this);
-      _left->polyCanonical(std::vector<EBTermNode *>(0));
-      _right->polyCanonical(std::vector<EBTermNode *>(0));
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+      children.push_back(this);
+      _left = _left->polyCanonical(std::vector<EBTermNode *>(0));
+      _right = _right->polyCanonical(std::vector<EBTermNode *>(0));
+      return this;
     };
   };
 
@@ -290,11 +302,11 @@ public:
 
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
 
-    virtual void polyCanonical(std::vector<EBTermNode *> & sim_ops. EBTermNode *) {
-      sim_ops.push_back(this);
-      _left->polyCanonical(std::vector<EBTermNode *>(0));
-      _middle->polyCanonical(std::vector<EBTermNode *>(0));
-      _right->polyCanonical(std::vector<EBTermNode *>(0));
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+      children.push_back(this);
+      _left = _left->polyCanonical(std::vector<EBTermNode *>(0));
+      _middle = _middle->polyCanonical(std::vector<EBTermNode *>(0));
+      _right = _right->polyCanonical(std::vector<EBTermNode *>(0));
     };
 
   protected:
