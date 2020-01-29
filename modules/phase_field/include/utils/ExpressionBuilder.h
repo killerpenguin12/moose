@@ -75,7 +75,8 @@ public:
       return os << node.stringify();
     }
 
-    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode * parent = NULL) = 0;
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children,
+                                       EBTermNode * parent = NULL) = 0;
   };
 
   /// Template class for leaf nodes holding numbers in the expression tree
@@ -91,7 +92,8 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const { return 0; }
 
-    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *)
+    {
       children.push_back(this);
       return this;
     };
@@ -109,7 +111,8 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const { return 0; }
 
-    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *)
+    {
       children.push_back(this);
       return this;
     };
@@ -147,7 +150,8 @@ public:
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
     const EBTermNode * getSubnode() const { return _subnode; }
 
-    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *)
+    {
       children.push_back(this);
       _subnode = _subnode->polyCanonical(std::vector<EBTermNode *>(0));
       return this;
@@ -284,7 +288,8 @@ public:
     virtual std::string stringify() const;
     virtual int precedence() const { return 2; }
 
-    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *)
+    {
       children.push_back(this);
       _left = _left->polyCanonical(std::vector<EBTermNode *>(0));
       _right = _right->polyCanonical(std::vector<EBTermNode *>(0));
@@ -302,11 +307,13 @@ public:
 
     virtual unsigned int substitute(const EBSubstitutionRuleList & rule);
 
-    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *) {
+    virtual EBTermNode * polyCanonical(std::vector<EBTermNode *> & children, EBTermNode *)
+    {
       children.push_back(this);
       _left = _left->polyCanonical(std::vector<EBTermNode *>(0));
       _middle = _middle->polyCanonical(std::vector<EBTermNode *>(0));
       _right = _right->polyCanonical(std::vector<EBTermNode *>(0));
+      return this;
     };
 
   protected:
@@ -335,7 +342,7 @@ public:
 
   class EBNNaryTermNode : public EBTermNode
   {
-    EBNNaryTermNode(std::vector<EBTermNode> children) : _children(childern) {};
+    EBNNaryTermNode(std::vector<EBTermNode> children) : _children(childern){};
 
   protected:
     std::vector<EBTermNode *> _children;
@@ -350,11 +357,14 @@ public:
       ADD
     } _type;
 
-    EBNNaryOpTermNode(std::vector<EBTermNode *> children, NodeType type) : EBNNaryTermNode(children), _type(type) {}
+    EBNNaryOpTermNode(std::vector<EBTermNode *> children, NodeType type)
+      : EBNNaryTermNode(children), _type(type)
+    {
+    }
     virtual EBNNaryOpTermNode * clone() const
     {
       std::vector<EBTermNode *> children(_children.size());
-      for(unsigned int i = 0; i < children.size(); ++i)
+      for (unsigned int i = 0; i < children.size(); ++i)
         children[i] = _children[i]->clone();
       return new EBNNaryOpTermNode(children, type);
     }

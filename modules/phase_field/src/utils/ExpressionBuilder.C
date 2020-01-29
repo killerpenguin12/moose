@@ -141,37 +141,62 @@ ExpressionBuilder::EBBinaryOpTermNode::precedence() const
 }
 
 void
-ExpressionBuilder::EBBinaryOpTermNode::polyCanonical(std::vector<EBTermNode *> children, EBtermNode * parent)
+ExpressionBuilder::EBBinaryOpTermNode::polyCanonical(std::vector<EBTermNode *> children,
+                                                     EBTermNode * parent)
 {
-  if(parent == NULL)
+  if (_type == DIV)
+    _right = new EBBinaryOpTermNode(_right, new EBNumberNode<Real>(-1), POW);
+  if (_type == SUB)
+    _right = new EBUnaryOpTermNode(_right, EBUnaryOpTermNode::NodeType::NEG);
+
+  if (parent != NULL && parent->_type == EBNNaryOpTermNode::NodeType::MUL &&
+      (_type == MUL || _type == DIV))
   {
-    switch (_type) {
+    children.push_back(_left);
+    children.push_back(_right);
+    return NULL;
+  }
+  else if (parent != NULL && parent->_type == EBNNaryOpTermNode::NodeType::ADD &&
+           (_type == ADD || _type == SUB))
+  {
+    children.push_back(_left);
+    children.push_back(_right);
+    return NULL;
+  }
+  else
+  {
+    switch (_type)
+    {
 
       case MUL:
-      new_children = std::vector<EBTermNode *>(2);
-      new_children[0] = _right;
-      new_children[1] = _left;
-      new_node = new EBNNaryOpTermNode(new_children,EBNNaryOpTermNode::NodeType::MUL);
-      return new_node->polyCanonical(std::vector<EBTermNode *>(0), NULL);
-    case DIV:
-      new_children = std::vector<EBTermNode *>(2);
-      new_children[0] = new EBBinaryOpTermNode(_right,new EBNumberNode<Real>(-1),POW);
-      new_children[1] = _left;
-      new_node = new EBNNaryOpTermNode(new_children,EBNNaryOpTermNode::NodeType::MUL);
-      return new_node->polyCanonical(std::vector<EBTermNode *>(0), NULL);
-    case ADD:
-      new_children = std::vector<EBTermNode *>(2);
-      new_children[0] = _right;
-      new_children[1] = _left;
-      new_node = new EBNNaryOpTermNode(new_children,EBNNaryOpTermNode::NodeType::ADD);
-      return new_node->polyCanonical(std::vector<EBTermNode *>(0), NULL);
-    case SUB:
-      new_children = std::vector<EBTermNode *>(2);
-      new_children[0] = new EBUnaryOpTermNode(_right,EBUnaryOpTermNode::NodeType::NEG);
-      new_children[1] = _left;
-      new_node = new EBNNaryOpTermNode(new_children,EBNNaryOpTermNode::NodeType::ADD);
-      return new_node->polyCanonical(std::vector<EBTermNode *>(0), NULL);
+      case DIV:
+        new_children = std::vector<EBTermNode *>(2);
+        new_children[0] = _right;
+        new_children[1] = _left;
+        new_node = new EBNNaryOpTermNode(new_children, EBNNaryOpTermNode::NodeType::MUL);
+        return new_node->polyCanonical(NULL);
+      case ADD:
+      case SUB:
+        new_children = std::vector<EBTermNode *>(2);
+        new_children[0] = _right;
+        new_children[1] = _left;
+        new_node = new EBNNaryOpTermNode(new_children, EBNNaryOpTermNode::NodeType::ADD);
+        return new_node->polyCanonical(NULL);
       case POW:
+        new_children = std::vector<EBTermNode *>(1);
+        new_children[0] = this;
+        new_node = new EBNNaryOpTermNode(new_children, EBNNaryOpTermNode::NodeType::MUL);
+        return new_node->polyCanonical(NULL);
+      case MOD:
+      case LESS:
+      case GREATER:
+      case LESSEQ:
+      case GREATEREQ:
+      case EQ:
+      case NOTEQ:
+        _left = _left->polyCanonical(std::vector<EBTermNode *>(0));
+        _right = _right->polyCanonical(std::vector<EBTermNode *>(0));
+        return this;
     }
   }
 }
@@ -191,12 +216,12 @@ ExpressionBuilder::EBNNaryOpTermNode::stringify() const
   const char * name[] = {"*", "+"};
   std::ostringstream s;
 
-  for(unsigned int i = 0; i < _children.size(); ++i)
+  for (unsigned int i = 0; i < _children.size(); ++i)
   {
     if (_children[i]->precedence() > precedence())
-    s << '(' << *_children[i] << ')';
-  else
-    s << *_children[i];
+      s << '(' << *_children[i] << ')';
+    else
+      s << *_children[i];
     s << name[_type];
   }
 
@@ -220,6 +245,35 @@ ExpressionBuilder::EBNNaryOpTermNode::precedence() const
   mooseError("Unknown type.");
 }
 
+EBTermNode *
+ExpressionBuilder::EBNNaryOpTermNode::polyCanonical(std::vector<EBTermNode *> children,
+                                                    EBTermNode * parent)
+{
+  if (parent != NULL && _type == parent->_type)
+  {
+    std::vector<EBTermNode *>::iterator it = children.begin();
+    while (it != children.end())
+      if ((*it)->polyCanonical(children, parent) == NULL)
+      {
+        std::iter_swap(it, children.end() - 1);
+        children.pop_back();
+      }
+      else
+        it++;
+  }
+  else
+  {
+    std::vector<EBTermNode *>::iterator it = _children.begin();
+    while (it != _children.end())
+      if ((*it)->polyCanonical(_children, this) == NULL)
+      {
+        std::iter_swap(it, _children.end());
+        _children.pop_back();
+      }
+      else
+        it++;
+  }
+}
 
 ExpressionBuilder::EBFunction &
 ExpressionBuilder::EBFunction::operator()(const ExpressionBuilder::EBTerm & arg)

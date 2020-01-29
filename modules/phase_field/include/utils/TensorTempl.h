@@ -43,53 +43,54 @@ public:
   // operators
   T operator()(unsigned int index, unsigned int index_rest...);
   T operator()(std::vector<unsigned int> index_caught,
-                    unsigned int index,
-                    unsigned int index_rest...);
+               unsigned int index,
+               unsigned int index_rest...);
   T operator()(std::vector<unsigned int> index_caught, unsigned int index);
 
   TensorTempl & operator+(const TensorTempl & rhs);
   TensorTempl & operator-(const TensorTempl & rhs);
   TensorTempl & operator*(const TensorTempl & rhs);
   TensorTempl & operator*(const T & rhs);
-  friend TensorTempl & operator*(const T & lhs, TensorTempl<T> & rhs) { return rhs*lhs;}
-  TensorTempl & contractMult(const TensorTempl & lhs, const TensorTempl & rhs, unsigned int contractor);
+  friend TensorTempl & operator*(const T & lhs, TensorTempl<T> & rhs) { return rhs * lhs; }
+  TensorTempl &
+  contractMult(const TensorTempl & lhs, const TensorTempl & rhs, unsigned int contractor);
   void recurseMult(T & result_term,
-                       unsigned int index,
-                       unsigned int divider,
-                       std::vector<long unsigned int> center,
-                       unsigned int current,
-                       std::vector<unsigned int> current_vec,
-                       const TensorTempl & lhs,
-                       const TensorTempl & rhs);
+                   unsigned int index,
+                   unsigned int divider,
+                   std::vector<long unsigned int> center,
+                   unsigned int current,
+                   std::vector<unsigned int> current_vec,
+                   const TensorTempl & lhs,
+                   const TensorTempl & rhs);
 
-                       friend std::ostream & operator<<(std::ostream & os, const TensorTempl<T> & tens)
-                       {
-                          os << "Shape : {";
-                          for(unsigned int i = 0; i < tens._shape.size(); ++i)
-                          {
-                             os << tens._shape[i];
-                             if(i != tens._shape.size() - 1)
-                               os << ',';
-                          }
-                          os << "}" << std::endl;
-                          os << "Accessor : {";
-                          for(unsigned int i = 0; i <tens._access_data.size(); ++i)
-                          {
-                             os << tens._access_data[i];
-                             if(i != tens._access_data.size() - 1)
-                             os << ',';
-                          }
-                          os << "}" << std::endl;
-                          os << "Data : {";
-                          for(unsigned int i = 0; i < tens._data.size(); ++i)
-                          {
-                             os << tens._data[i];
-                             if(i != tens._data.size() - 1)
-                             os << ',';
-                          }
-                          os << "}" << std::endl;
-                          return os;
-                       }
+  friend std::ostream & operator<<(std::ostream & os, const TensorTempl<T> & tens)
+  {
+    os << "Shape : {";
+    for (unsigned int i = 0; i < tens._shape.size(); ++i)
+    {
+      os << tens._shape[i];
+      if (i != tens._shape.size() - 1)
+        os << ',';
+    }
+    os << "}" << std::endl;
+    os << "Accessor : {";
+    for (unsigned int i = 0; i < tens._access_data.size(); ++i)
+    {
+      os << tens._access_data[i];
+      if (i != tens._access_data.size() - 1)
+        os << ',';
+    }
+    os << "}" << std::endl;
+    os << "Data : {";
+    for (unsigned int i = 0; i < tens._data.size(); ++i)
+    {
+      os << tens._data[i];
+      if (i != tens._data.size() - 1)
+        os << ',';
+    }
+    os << "}" << std::endl;
+    return os;
+  }
 
   /// works for order 1 and 2 only
   void transpose();
@@ -138,7 +139,7 @@ TensorTempl<T>::operator()(std::vector<unsigned int> index_caught, unsigned int 
   unsigned int location = 0;
   for (unsigned int i = 0; i < _access_data.size(); ++i)
   {
-    if(index_caught[i] >= _shape[i])
+    if (index_caught[i] >= _shape[i])
       mooseError("Incorrect indices for accessing tensor.");
     location += _access_data[i] * index_caught[i];
   }
@@ -186,8 +187,8 @@ TensorTempl<T> & TensorTempl<T>::operator*(const TensorTempl<T> & rhs)
 template <typename T>
 TensorTempl<T> &
 TensorTempl<T>::contractMult(const TensorTempl<T> & lhs,
-                                          const TensorTempl<T> & rhs,
-                                          unsigned int contractor)
+                             const TensorTempl<T> & rhs,
+                             unsigned int contractor)
 {
   for (unsigned int i = 0; i < contractor; ++i)
     if (this->_shape[this->_shape.size() - 1 - i] != rhs._shape[i])
@@ -223,24 +224,24 @@ TensorTempl<T>::contractMult(const TensorTempl<T> & lhs,
 template <typename T>
 void
 TensorTempl<T>::recurseMult(T & result_term,
-                                         unsigned int index,
-                                         unsigned int divider,
-                                         std::vector<long unsigned int> center,
-                                         unsigned int current,
-                                         std::vector<unsigned int> current_vec,
-                                         const TensorTempl<T> & lhs,
-                                         const TensorTempl<T> & rhs)
+                            unsigned int index,
+                            unsigned int divider,
+                            std::vector<long unsigned int> center,
+                            unsigned int current,
+                            std::vector<unsigned int> current_vec,
+                            const TensorTempl<T> & lhs,
+                            const TensorTempl<T> & rhs)
 {
-  for(unsigned int i= 0; i < current_vec.size(); ++i)
-  if (current < center.size())
-  {
-    for (unsigned int i = 0; i < center[current]; ++i)
+  for (unsigned int i = 0; i < current_vec.size(); ++i)
+    if (current < center.size())
     {
-      current_vec[current] = i;
-      recurseMult(result_term, index, divider, center, current + 1, current_vec, lhs, rhs);
+      for (unsigned int i = 0; i < center[current]; ++i)
+      {
+        current_vec[current] = i;
+        recurseMult(result_term, index, divider, center, current + 1, current_vec, lhs, rhs);
+      }
+      return;
     }
-    return;
-  }
   unsigned int lhs_index = 0;
   unsigned int multiplier = 1;
   unsigned int rhs_index = index % divider;
@@ -255,8 +256,7 @@ TensorTempl<T>::recurseMult(T & result_term,
 }
 
 template <typename T>
-TensorTempl<T> &
-TensorTempl<T>::operator*(const T & rhs)
+TensorTempl<T> & TensorTempl<T>::operator*(const T & rhs)
 {
   TensorTempl<T> * result = new TensorTempl<T>();
   result->_shape = this->_shape;
@@ -272,7 +272,7 @@ template <typename T>
 void
 TensorTempl<T>::transpose()
 {
-  transpose(0,1);
+  transpose(0, 1);
 }
 
 template <typename T>
@@ -288,9 +288,9 @@ TensorTempl<T>::setAccessor()
 {
   _access_data = std::vector<unsigned int>(_shape.size(), 0);
   unsigned int multiplier = 1;
-  for(int i = _shape.size() - 2; i >= 0; i--)
+  for (int i = _shape.size() - 2; i >= 0; i--)
   {
-    multiplier *= _shape[i+1];
+    multiplier *= _shape[i + 1];
     _access_data[i] = multiplier;
   }
 }
