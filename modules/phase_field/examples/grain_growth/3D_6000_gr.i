@@ -28,7 +28,7 @@
 [UserObjects]
   [./voronoi]
     type = PolycrystalVoronoi
-    grain_num = 6000 # Number of grains
+    grain_num = 60 # Number of grains
     rand_seed = 8675 # 301
     coloring_algorithm = jp
   [../]

@@ -9,30 +9,24 @@
 
 #pragma once
 
-#include "ElementIntegralVariablePostprocessor.h"
+#include "ElementIntegralPostprocessor.h"
 
 /**
  * Calculate total grain boundary length in 2D and area in 3D.
  */
-class AverageGBVelocity : public ElementIntegralVariablePostprocessor
+class NumberPoints : public ElementIntegralPostprocessor
 {
 public:
   static InputParameters validParams();
 
-  AverageGBVelocity(const InputParameters & parameters);
+  NumberPoints(const InputParameters & parameters);
+
+
 
 protected:
 
-  virtual void initialize() override;
-  virtual void execute() override;
   virtual Real computeIntegral() override;
-  virtual Real computeQpIntegral(){std::cout << "when does this run?" << std::endl;
-    return 0;};
-
-  virtual Real getValue(){
-    std::cout << "qPoints: " << _qPoints << " value: " << _value << std::endl;
-    return _value/_qPoints;};
-  virtual void threadJoin(const UserObject & y) override;
+  virtual Real computeQpIntegral() {return 0;};
 
 
   /// Number of order parameters
@@ -45,7 +39,6 @@ protected:
   std::vector<const VariableGradient *> _grad_eta;
 
   Real _value;
-  Real _qPoints;
   /// Order parameters
   //std::vector<const VariableGradient *> _grads;
 

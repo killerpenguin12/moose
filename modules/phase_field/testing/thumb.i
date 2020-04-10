@@ -99,25 +99,25 @@
     type = GBEvolution
     T = 500 # K
     wGB = 60 # nm
-    GBmob0 = 2.5e-6 #m^4/(Js) from Schoenfelder 1997
+    GBmob0 = 3.5e-6 #m^4/(Js) from Schoenfelder 1997
     Q = 0.23 #Migration energy in eV
     GBenergy = 0.708 #GB energy in J/m^2
   [../]
 []
 
 [Postprocessors]
-  [./gr_area]
-    type = ElementIntegralVariablePostprocessor
+  [./gr_avg_vel]
+    type = AverageGBVelocity
     variable = gr1
   [../]
-  [./pos]
-    type = FindValueOnLine
-    target = 0.5
-    v = gr1
-    start_point = '500 500 0'
-    end_point = '500 1000 0'
+#  [./pos]
+#    type = FindValueOnLine
+#    target = 0.5
+#    v = gr1
+#    start_point = '500 500 0'
+#    end_point = '500 1000 0'
     #execute_on = 'initial timestep_end'
-  [../]
+#  [../]
 []
 
 [Preconditioning]

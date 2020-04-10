@@ -12,53 +12,99 @@
 
 registerMooseObject("PhaseFieldApp", AverageGBVelocity);
 
-template <>
 InputParameters
-validParams<AverageGBVelocity>()
+AverageGBVelocity::validParams()
 {
-  InputParameters params = validParams<ElementIntegralPostprocessor>();
-  params.addClassDescription("Calculate average grain boundary velocity");
+  InputParameters params = ElementIntegralVariablePostprocessor::validParams();
+  params.addClassDescription("Compute the average velocity of grain boundaries.");
+  params.addParam<Real>("eta_bottom", 0.20, "start point on range of eta we are interested in.");
+  params.addParam<Real>("eta_top", 0.80, "end point on range of eta we are interested in.");
   params.addRequiredCoupledVarWithAutoBuild(
       "v", "var_name_base", "op_num", "Array of coupled variables");
-  params.addParam<Real>("",
-                        2.0,
-                        "Number of order parameters contacting a boundary "
-                        "(should be 2.0 in polycrystals and 1.0 for "
-                        "dispersed particles)");
-  params.addParam<Real>("op_range",
-                        1.0,
-                        "Range over which order parameters change across an "
-                        "interface. By default order parameters are assumed to "
-                        "vary from 0 to 1");
   return params;
 }
 
 AverageGBVelocity::AverageGBVelocity(const InputParameters & parameters)
-  : ElementIntegralPostprocessor(parameters),
+  : ElementIntegralVariablePostprocessor(parameters),
+    _eta_bottom(getParam<Real>("eta_bottom")),
+    _eta_top(getParam<Real>("eta_top")),
     _op_num(coupledComponents("v")),
-    _grads(_op_num),
-    _factor(getParam<Real>("grains_per_side") * getParam<Real>("op_range"))
+    _eta(_op_num),
+    _deta_dt(_op_num),
+    _grad_eta(_op_num),
+    _qPoints(0)
 {
-  // make sure user input is valid
-  if (MooseUtils::absoluteFuzzyEqual(_factor, 0.0))
-    mooseError("Neither grains_per_side nor op_range may be zero.");
-
-  // Loop over variables (ops)
-  for (MooseIndex(_op_num) op_index = 0; op_index < _op_num; ++op_index)
-    _grads[op_index] = &coupledGradient("v", op_index);
+  for (unsigned int i = 0; i < _op_num; ++i)
+  {
+    // Grab necessary variables
+    _grad_eta[i] = &coupledGradient("v", i);
+    _deta_dt[i] = &coupledDot("v", i);
+    _eta[i] = &coupledValue("v", i);
+  }
 }
 
-Real
-AverageGBVelocity::computeQpIntegral()
+void
+AverageGBVelocity::initialize()
 {
-  Real grad_sum = 0.0;
-  for (auto grad : _grads)
-    grad_sum += (*grad)[_qp].norm();
-  return grad_sum;
+  ElementIntegralVariablePostprocessor::initialize();
+//  std::cout << "Iniatialize" << std::endl;
+  _qPoints = 0;
+  _value = 0;
 }
 
-Real
-AverageGBVelocity::getValue()
+void
+AverageGBVelocity::execute()
 {
-  return ElementIntegralPostprocessor::getValue() / _factor;
+  ElementIntegralVariablePostprocessor::execute();
+/*  std::cout << "Execute" << std::endl;
+
+  for(unsigned int _qp = 0; _qp < _qrule->n_points(); _qp++)
+   for (unsigned int i = 0; i < _op_num; ++i)
+   {
+     if ((*_eta[i])[_qp] > _eta_bottom && (*_eta[i])[_qp] < _eta_top)
+     {
+       _qPoints += 1;
+     }
+   }*/
+
+}
+
+void
+AverageGBVelocity::threadJoin(const UserObject & y)
+{
+  ElementIntegralVariablePostprocessor::threadJoin(y);
+  //std::cout << "ThreadJoin" << std::endl;
+  const AverageGBVelocity & pps = static_cast<const AverageGBVelocity &>(y);
+  _qPoints += pps._qPoints;
+  _value += pps._value;
+}
+Real
+AverageGBVelocity::computeIntegral()
+{
+  //_value = 0;
+  //Real _new_value = 0;
+//std::cout << "Compute Integral" << std::endl;
+for(unsigned int _qp = 0; _qp < _qrule->n_points(); _qp++)
+  {
+    for (unsigned int i = 0; i < _op_num; ++i)
+    {
+      _qPoints += 1;
+      if ((*_eta[i])[_qp] > _eta_bottom && (*_eta[i])[_qp] < _eta_top)
+      {
+        _value += (1.0 / (*_grad_eta[i])[_qp].norm() * abs((*_deta_dt[i])[_qp]));
+
+        //if((*_deta_dt[i])[_qp] < 0)
+        //  std::cout << "_deta_dt is negative" << std::endl;
+        //if(1.0 / (*_grad_eta[i])[_qp].norm() < 0)
+        //  std::cout << "_grad_eta is negative" << std::endl;
+      }
+    }
+  }
+ //if(_value < 0) {
+  //std::cout << " _value: " << _value << " qPoints: " << _qPoints << std::endl;}
+  //std::cout << "IS THIS WORKING?? COME ON MAN!, _value: " << _value << std::endl;
+  //if(  > 0)
+  //  return sum/_qPoints;
+  //else
+  return _value;
 }

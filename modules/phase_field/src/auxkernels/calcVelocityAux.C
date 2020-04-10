@@ -57,14 +57,10 @@ calcVelocityAux::computeValue()
   new_val = 0;
   for(unsigned int i = 0; i < _op_num; ++i)
   {
-    //if(((*_grad_eta[i])[_qp].norm() > 0.005)){
     if((*_eta[i])[_qp] > _eta_bottom && (*_eta[i])[_qp] < _eta_top){
-      //std::cout << "grad eta: " << (*_grad_eta[i])[_qp].norm() << " deta_dt: " << ((*_eta[i])[_qp]) << std::endl;
-      new_val = (1/((*_grad_eta[i])[_qp].norm())) * ((*deta_dt[i])[_qp]);}//_c_fe_problem.dt();}
+      new_val = (1/((*_grad_eta[i])[_qp].norm())) * ((*deta_dt[i])[_qp]);}
 
-    //if(new_val > _value)
-      //new_value - _value;
-    if(new_val > _value)//&& new_val < 100)
+    if(new_val > _value)
       _value = new_val;
   }
 
